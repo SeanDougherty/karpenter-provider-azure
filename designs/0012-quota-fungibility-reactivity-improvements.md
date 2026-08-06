@@ -493,7 +493,7 @@ Sample request (zonal)
   }
 }
 
-$ az rest --method post --uri "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/westus2/skuMixPlacementScores/recommendations/generate?api-version=2026-05-05-preview" --body @/tmp/skuMixPlacement.json
+$ az rest --method post --headers "Content-Type=application/json" --uri "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/westus2/skuMixPlacementScores/recommendations/generate?api-version=2026-05-05-preview" --body @/tmp/skuMixPlacement.json
 ```
 
 Sample response
@@ -550,7 +550,7 @@ Sample request (regional):
 }
 
 
-$ az rest --method post --uri "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/westus2/skuMixPlacementScores/recommendations/generate?api-version=2026-05-05-preview" --body @/tmp/skuMixPlacement.json
+$ az rest --method post --headers "Content-Type=application/json" --uri "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/westus2/skuMixPlacementScores/recommendations/generate?api-version=2026-05-05-preview" --body @/tmp/skuMixPlacement.json
 ```
 
 Sample response:
