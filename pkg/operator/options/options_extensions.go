@@ -31,3 +31,8 @@ func (o *Options) IsCiliumNodeSubnet() bool {
 func (o *Options) IsNetworkPluginNone() bool {
 	return o.NetworkPlugin == consts.NetworkPluginNone
 }
+
+// TODO: Unclear if we actually need this
+func (o *Options) IsComputeRecommendationEnabled() bool {
+	return o.ComputeRecommendationMode != consts.ComputeRecommendationModeDisabled
+}
