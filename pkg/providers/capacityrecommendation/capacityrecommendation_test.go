@@ -50,7 +50,8 @@ func TestGetRankingReturnsRecommendation(t *testing.T) {
 			Count:        5,
 		})
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(ranking).To(Equal([]capacityrecommendation.RankedVMSize{{Name: "Standard_D4s_v5", Score: 9, Zone: "2"}}))
+	g.Expect(ranking.ID).To(Equal("choice-id"))
+	g.Expect(ranking.VMSplit).To(Equal([]capacityrecommendation.VMSplitItem{{Name: "Standard_D4s_v5", Count: 5, Zone: "2"}}))
 	g.Expect(client.PostBehavior.Calls()).To(Equal(1))
 
 	input := client.PostBehavior.CalledWithInput.Pop()
@@ -66,11 +67,12 @@ func TestGetRankingReturnsRecommendation(t *testing.T) {
 	g.Expect(*input.Request.InstanceDescription.VMSizes[0].Rank).To(Equal(int32(0)))
 }
 
-func TestGetRankingCachesByCapacityTypeZonesAndVMSizes(t *testing.T) {
+func TestGetRankingCacheIgnoresZoneOrderAndCount(t *testing.T) {
 	g := NewWithT(t)
 	client := &fake.SKUMixPlacementScoresAPI{}
 	client.PostBehavior.Output.Set(recommendationResponse(time.Now().Add(time.Minute), 8, "Standard_D2s_v5", "1"))
-	provider := capacityrecommendation.NewProvider(client, newCache(), "eastus")
+	cache := newCache()
+	provider := capacityrecommendation.NewProvider(client, cache, "eastus")
 
 	first, err := provider.GetRanking(
 		context.Background(),
@@ -85,7 +87,7 @@ func TestGetRankingCachesByCapacityTypeZonesAndVMSizes(t *testing.T) {
 	second, err := provider.GetRanking(
 		context.Background(),
 		&capacityrecommendation.RankingInput{
-			VMSizes:      []string{"Standard_D4s_v5", "Standard_D2s_v5"},
+			VMSizes:      []string{"Standard_D2s_v5", "Standard_D4s_v5"},
 			Zones:        []string{"2", "1"},
 			CapacityType: karpv1.CapacityTypeOnDemand,
 			OSType:       corev1.Linux,
@@ -94,6 +96,29 @@ func TestGetRankingCachesByCapacityTypeZonesAndVMSizes(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(second).To(Equal(first))
 	g.Expect(client.PostBehavior.Calls()).To(Equal(1))
+	g.Expect(cache.Items()).To(HaveLen(1))
+	for _, item := range cache.Items() {
+		cached, ok := item.Object.(*capacityrecommendation.Recommendation)
+		g.Expect(ok).To(BeTrue())
+		g.Expect(cached.ID).To(Equal("choice-id"))
+	}
+}
+
+func TestGetRankingCacheKeyIncludesVMSizeOrder(t *testing.T) {
+	g := NewWithT(t)
+	client := &fake.SKUMixPlacementScoresAPI{}
+	client.PostBehavior.Output.Set(recommendationResponse(time.Now().Add(time.Minute), 8, "Standard_D2s_v5", "1"))
+	provider := capacityrecommendation.NewProvider(client, newCache(), "eastus")
+
+	input := validInput()
+	input.VMSizes = []string{"Standard_D2s_v5", "Standard_D4s_v5"}
+	_, err := provider.GetRanking(context.Background(), input)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	input.VMSizes = []string{"Standard_D4s_v5", "Standard_D2s_v5"}
+	_, err = provider.GetRanking(context.Background(), input)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(client.PostBehavior.Calls()).To(Equal(2))
 }
 
 func TestGetRankingCacheKeyIncludesOSType(t *testing.T) {
@@ -153,6 +178,185 @@ func TestGetRankingReturnsInvalidResponseError(t *testing.T) {
 	g.Expect(ranking).To(BeNil())
 }
 
+func TestGetRankingSelectsHighestScoringPlacementChoice(t *testing.T) {
+	g := NewWithT(t)
+	client := &fake.SKUMixPlacementScoresAPI{}
+	client.PostBehavior.Output.Set(&armrecommender.SKUMixPlacementScoresClientPostResponse{
+		SKUMixPlacementResponse: armrecommender.SKUMixPlacementResponse{
+			ValidUntil: to.Ptr(time.Now().Add(time.Minute)),
+			PlacementChoices: []*armrecommender.SKUMixPlacementDeploymentChoice{
+				{
+					ID:    to.Ptr("first-choice"),
+					Score: to.Ptr(int32(4)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D2s_v5"), Capacity: to.Ptr(int32(5)), Zone: to.Ptr("1")},
+					},
+				},
+				// Second in order (bug in recommendation API) but higher score, should be selected
+				{
+					ID:    to.Ptr("selected-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D4s_v5"), Capacity: to.Ptr(int32(3)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("3")},
+					},
+				},
+			},
+		},
+	})
+	provider := capacityrecommendation.NewProvider(client, newCache(), "eastus")
+
+	ranking, err := provider.GetRanking(context.Background(), validInput())
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ranking.ID).To(Equal("selected-choice"))
+	g.Expect(ranking.VMSplit).To(Equal([]capacityrecommendation.VMSplitItem{
+		{Name: "Standard_D4s_v5", Count: 3, Zone: "2"},
+		{Name: "Standard_D8s_v5", Count: 2, Zone: "3"},
+	}))
+}
+
+func TestGetRankingBreaksScoreTieUsingRequestedSKUOrder(t *testing.T) {
+	g := NewWithT(t)
+	client := &fake.SKUMixPlacementScoresAPI{}
+	client.PostBehavior.Output.Set(&armrecommender.SKUMixPlacementScoresClientPostResponse{
+		SKUMixPlacementResponse: armrecommender.SKUMixPlacementResponse{
+			ValidUntil: to.Ptr(time.Now().Add(time.Minute)),
+			PlacementChoices: []*armrecommender.SKUMixPlacementDeploymentChoice{
+				{
+					ID:    to.Ptr("d2-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D2s_v3"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_D2s_v3"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_D2s_v3"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("3")},
+					},
+				},
+				{
+					ID:    to.Ptr("d8-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("3")},
+					},
+				},
+				{
+					ID:    to.Ptr("mixed-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(3)), Zone: to.Ptr("3")},
+					},
+				},
+			},
+		},
+	})
+	provider := capacityrecommendation.NewProvider(client, newCache(), "eastus")
+	input := validInput()
+	input.VMSizes = []string{"Standard_D8s_v5", "Standard_D2s_v3", "Standard_E2s_v3"}
+	input.Zones = []string{"1", "2", "3"}
+
+	ranking, err := provider.GetRanking(context.Background(), input)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ranking.ID).To(Equal("d8-choice"))
+	g.Expect(ranking.VMSplit).To(Equal([]capacityrecommendation.VMSplitItem{
+		{Name: "Standard_D8s_v5", Count: 2, Zone: "1"},
+		{Name: "Standard_D8s_v5", Count: 2, Zone: "2"},
+		{Name: "Standard_D8s_v5", Count: 1, Zone: "3"},
+	}))
+}
+
+func TestGetRankingBreaksScoreAndSKUTieUsingRequestedZoneCoverage(t *testing.T) {
+	g := NewWithT(t)
+	client := &fake.SKUMixPlacementScoresAPI{}
+	client.PostBehavior.Output.Set(&armrecommender.SKUMixPlacementScoresClientPostResponse{
+		SKUMixPlacementResponse: armrecommender.SKUMixPlacementResponse{
+			ValidUntil: to.Ptr(time.Now().Add(time.Minute)),
+			PlacementChoices: []*armrecommender.SKUMixPlacementDeploymentChoice{
+				{
+					ID:    to.Ptr("first-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("3")},
+					},
+				},
+				{
+					ID:    to.Ptr("selected-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(2)), Zone: to.Ptr("3")},
+					},
+				},
+			},
+		},
+	})
+	provider := capacityrecommendation.NewProvider(client, newCache(), "eastus")
+	input := validInput()
+	input.VMSizes = []string{"Standard_D8s_v5", "Standard_D2s_v3", "Standard_E2s_v3"}
+	input.Zones = []string{"1", "2", "3"}
+
+	ranking, err := provider.GetRanking(context.Background(), input)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ranking.ID).To(Equal("selected-choice"))
+	g.Expect(ranking.VMSplit).To(Equal([]capacityrecommendation.VMSplitItem{
+		{Name: "Standard_D8s_v5", Count: 2, Zone: "1"},
+		{Name: "Standard_D8s_v5", Count: 1, Zone: "2"},
+		{Name: "Standard_E2s_v3", Count: 2, Zone: "3"},
+	}))
+}
+
+func TestGetRankingUsesOverallZoneCoverageAfterPerSKUTie(t *testing.T) {
+	g := NewWithT(t)
+	client := &fake.SKUMixPlacementScoresAPI{}
+	client.PostBehavior.Output.Set(&armrecommender.SKUMixPlacementScoresClientPostResponse{
+		SKUMixPlacementResponse: armrecommender.SKUMixPlacementResponse{
+			ValidUntil: to.Ptr(time.Now().Add(time.Minute)),
+			PlacementChoices: []*armrecommender.SKUMixPlacementDeploymentChoice{
+				{
+					ID:    to.Ptr("two-zone-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("2")},
+					},
+				},
+				{
+					ID:    to.Ptr("three-zone-choice"),
+					Score: to.Ptr(int32(9)),
+					SKUSplit: []*armrecommender.SKUMixPlacementItem{
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("1")},
+						{Name: to.Ptr("Standard_D8s_v5"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("2")},
+						{Name: to.Ptr("Standard_E2s_v3"), Capacity: to.Ptr(int32(1)), Zone: to.Ptr("3")},
+					},
+				},
+			},
+		},
+	})
+	provider := capacityrecommendation.NewProvider(client, newCache(), "eastus")
+	input := validInput()
+	input.VMSizes = []string{"Standard_D8s_v5", "Standard_E2s_v3"}
+	input.Zones = []string{"1", "2", "3"}
+	input.Count = 4
+
+	ranking, err := provider.GetRanking(context.Background(), input)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ranking.ID).To(Equal("three-zone-choice"))
+	g.Expect(ranking.VMSplit).To(Equal([]capacityrecommendation.VMSplitItem{
+		{Name: "Standard_D8s_v5", Count: 1, Zone: "1"},
+		{Name: "Standard_D8s_v5", Count: 1, Zone: "2"},
+		{Name: "Standard_E2s_v3", Count: 1, Zone: "2"},
+		{Name: "Standard_E2s_v3", Count: 1, Zone: "3"},
+	}))
+}
+
 func TestGetRankingHonorsValidUntil(t *testing.T) {
 	g := NewWithT(t)
 	client := &fake.SKUMixPlacementScoresAPI{}
@@ -186,7 +390,7 @@ func TestGetRankingDeduplicatesConcurrentRequests(t *testing.T) {
 
 	var wg sync.WaitGroup
 	type result struct {
-		ranking []capacityrecommendation.RankedVMSize
+		ranking *capacityrecommendation.Recommendation
 		err     error
 	}
 	results := make(chan result, 6)
@@ -209,7 +413,8 @@ func TestGetRankingDeduplicatesConcurrentRequests(t *testing.T) {
 
 	for result := range results {
 		g.Expect(result.err).NotTo(HaveOccurred())
-		g.Expect(result.ranking).To(HaveLen(1))
+		g.Expect(result.ranking.VMSplit).To(HaveLen(1))
+		g.Expect(result.ranking.ID).To(Equal("choice-id"))
 	}
 	g.Expect(client.PostBehavior.Calls()).To(Equal(1))
 }
@@ -229,18 +434,30 @@ func newCache() *cache.Cache {
 }
 
 func recommendationResponse(validUntil time.Time, score int32, name string, zone string) *armrecommender.SKUMixPlacementScoresClientPostResponse {
+	response := recommendationResponseWithSplits(validUntil, "choice-id",
+		armrecommender.SKUMixPlacementItem{
+			Name:     to.Ptr(name),
+			Capacity: to.Ptr(int32(5)),
+			Zone:     to.Ptr(zone),
+		},
+	)
+	response.PlacementChoices[0].Score = to.Ptr(score)
+	return response
+}
+
+func recommendationResponseWithSplits(validUntil time.Time, id string, splits ...armrecommender.SKUMixPlacementItem) *armrecommender.SKUMixPlacementScoresClientPostResponse {
+	items := make([]*armrecommender.SKUMixPlacementItem, 0, len(splits))
+	for i := range splits {
+		items = append(items, &splits[i])
+	}
 	return &armrecommender.SKUMixPlacementScoresClientPostResponse{
 		SKUMixPlacementResponse: armrecommender.SKUMixPlacementResponse{
 			ValidUntil: to.Ptr(validUntil),
 			PlacementChoices: []*armrecommender.SKUMixPlacementDeploymentChoice{
 				{
-					Score: to.Ptr(score),
-					SKUSplit: []*armrecommender.SKUMixPlacementItem{
-						{
-							Name: to.Ptr(name),
-							Zone: to.Ptr(zone),
-						},
-					},
+					ID:       to.Ptr(id),
+					Score:    to.Ptr(int32(9)),
+					SKUSplit: items,
 				},
 			},
 		},

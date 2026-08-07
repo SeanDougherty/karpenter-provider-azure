@@ -18,6 +18,7 @@ package capacityrecommendation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/samber/lo"
 	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -47,9 +49,9 @@ type SKUMixPlacementScoresAPI interface {
 	) (armrecommender.SKUMixPlacementScoresClientPostResponse, error)
 }
 
-// Provider supplies capacity-aware VM size rankings.
+// Provider supplies capacity-aware VM placement recommendations.
 type Provider interface {
-	GetRanking(ctx context.Context, input *RankingInput) ([]RankedVMSize, error)
+	GetRanking(ctx context.Context, input *RankingInput) (*Recommendation, error)
 }
 
 // RankingInput identifies an allocation request to rank.
@@ -61,14 +63,22 @@ type RankingInput struct {
 	Count        int32
 }
 
-// RankedVMSize is an API-recommended VM size ordered by placement score.
-type RankedVMSize struct {
+// VMSplitItem is a VM size allocation from the selected placement choice.
+type VMSplitItem struct {
 	Name  string
-	Score int
+	Count int32
 	Zone  string
 }
 
-// DefaultProvider obtains and reactively caches SKU Mix Placement rankings.
+// Recommendation is the selected placement choice and its VM allocations.
+// ID is preserved so callers can correlate subsequent ARM operations with the
+// recommendation that informed them.
+type Recommendation struct {
+	ID      string
+	VMSplit []VMSplitItem
+}
+
+// DefaultProvider obtains and reactively caches SKU Mix Placement recommendations.
 type DefaultProvider struct {
 	client     SKUMixPlacementScoresAPI
 	cache      *cache.Cache
@@ -91,7 +101,7 @@ func NewProvider(client SKUMixPlacementScoresAPI, cache *cache.Cache, location s
 }
 
 // GetRanking returns a cached or freshly generated recommendation.
-func (p *DefaultProvider) GetRanking(ctx context.Context, input *RankingInput) ([]RankedVMSize, error) {
+func (p *DefaultProvider) GetRanking(ctx context.Context, input *RankingInput) (*Recommendation, error) {
 	if err := validateInput(input); err != nil {
 		return nil, fmt.Errorf("invalid SKU Mix Placement recommendation input: %w", err)
 	}
@@ -114,14 +124,14 @@ func (p *DefaultProvider) GetRanking(ctx context.Context, input *RankingInput) (
 		return nil, err
 	}
 
-	result, ok := value.([]RankedVMSize)
+	result, ok := value.(*Recommendation)
 	if !ok {
 		return nil, fmt.Errorf("unexpected recommendation result type %T", value)
 	}
-	return cloneRankedVMSizes(result), nil
+	return cloneRecommendation(result), nil
 }
 
-func (p *DefaultProvider) fetchAndCache(ctx context.Context, key string, input *RankingInput) ([]RankedVMSize, error) {
+func (p *DefaultProvider) fetchAndCache(ctx context.Context, key string, input *RankingInput) (*Recommendation, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
@@ -129,7 +139,20 @@ func (p *DefaultProvider) fetchAndCache(ctx context.Context, key string, input *
 	if err != nil {
 		return nil, err
 	}
-	result, err := parseResponse(response)
+
+	choice, err := bestPlacementChoice(response, input)
+	if err != nil {
+		return nil, err
+	}
+	if response.PlacementChoices[0] != choice {
+		log.FromContext(ctx).Error(
+			fmt.Errorf("selected SKU Mix Placement choice differs from first response choice"),
+			"selected non-first SKU Mix Placement choice",
+			"selectedChoice", placementChoiceJSON(choice),
+			"firstChoice", placementChoiceJSON(response.PlacementChoices[0]),
+		)
+	}
+	result, err := newRecommendationFromChoice(choice)
 	if err != nil {
 		return nil, err
 	}
@@ -144,19 +167,19 @@ func (p *DefaultProvider) fetchAndCache(ctx context.Context, key string, input *
 	}
 
 	p.cache.Set(key, result, ttl)
-	return cloneRankedVMSizes(result), nil
+	return cloneRecommendation(result), nil
 }
 
-func (p *DefaultProvider) getCached(key string) ([]RankedVMSize, bool) {
+func (p *DefaultProvider) getCached(key string) (*Recommendation, bool) {
 	value, ok := p.cache.Get(key)
 	if !ok {
 		return nil, false
 	}
-	result, ok := value.([]RankedVMSize)
+	result, ok := value.(*Recommendation)
 	if !ok {
 		return nil, false
 	}
-	return cloneRankedVMSizes(result), true
+	return cloneRecommendation(result), true
 }
 
 func toSKUMixPlacementRequest(input *RankingInput) armrecommender.SKUMixPlacementRequest {
@@ -197,46 +220,126 @@ func toSKUMixPlacementRequest(input *RankingInput) armrecommender.SKUMixPlacemen
 	}
 }
 
-func parseResponse(response armrecommender.SKUMixPlacementScoresClientPostResponse) ([]RankedVMSize, error) {
-	if len(response.PlacementChoices) == 0 {
-		return nil, fmt.Errorf("SKU Mix Placement response contained no placement choices")
+func newRecommendationFromChoice(choice *armrecommender.SKUMixPlacementDeploymentChoice) (*Recommendation, error) {
+	if choice == nil || choice.Score == nil || choice.SKUSplit == nil {
+		return nil, fmt.Errorf("SKU Mix Placement response contained an invalid placement choice")
 	}
 
-	choices := append([]*armrecommender.SKUMixPlacementDeploymentChoice(nil), response.PlacementChoices...)
-	// TODO: this is possibly overkill since the service is supposed to return them in order, but guarding defensively for now...
-	sort.SliceStable(choices, func(i, j int) bool {
-		return choiceScore(choices[i]) > choiceScore(choices[j])
-	})
-
-	result := make([]RankedVMSize, 0)
-	for _, choice := range choices {
-		if choice == nil || choice.Score == nil || choice.SKUSplit == nil {
-			return nil, fmt.Errorf("SKU Mix Placement response contained an invalid placement choice")
+	result := make([]VMSplitItem, 0, len(choice.SKUSplit))
+	for _, split := range choice.SKUSplit {
+		if split == nil || split.Name == nil || split.Capacity == nil {
+			return nil, fmt.Errorf("SKU Mix Placement response contained an invalid SKU split")
 		}
-		for _, split := range choice.SKUSplit {
-			if split == nil || split.Name == nil {
-				return nil, fmt.Errorf("SKU Mix Placement response contained an invalid SKU split")
-			}
-			result = append(
-				result,
-				RankedVMSize{
-					Name:  *split.Name,
-					Score: int(lo.FromPtr(choice.Score)),
-					Zone:  lo.FromPtr(split.Zone),
-				})
-		}
+		result = append(result, VMSplitItem{
+			Name:  *split.Name,
+			Count: *split.Capacity,
+			Zone:  lo.FromPtr(split.Zone),
+		})
 	}
 	if len(result) == 0 {
 		return nil, fmt.Errorf("SKU Mix Placement response contained no recommended VM sizes")
 	}
-	return result, nil
+	return &Recommendation{ID: lo.FromPtr(choice.ID), VMSplit: result}, nil
 }
 
-func choiceScore(choice *armrecommender.SKUMixPlacementDeploymentChoice) int32 {
-	if choice == nil {
-		return 0
+// bestPlacementChoice ensures that we choose the choice we believe is best in the presence of score-ties.
+// The hope is that we can work with the SKU SPlit API team to ensure that the API always returns this choice (at least in some allocation mode),
+// but today we've observed some situations where it returns a different choice than we would have naturally picked otherwise. This function
+// is a bset-effort attempt to ensure that we pick the best choice we think.
+// Note that this is not a guarantee, because if no choice that matches what we think is best is returned we will not pick it (we are only picking from returned choices)
+func bestPlacementChoice(response armrecommender.SKUMixPlacementScoresClientPostResponse, input *RankingInput) (*armrecommender.SKUMixPlacementDeploymentChoice, error) {
+	if len(response.PlacementChoices) == 0 {
+		return nil, fmt.Errorf("SKU Mix Placement response contained no placement choices")
 	}
-	return lo.FromPtr(choice.Score)
+
+	var best *armrecommender.SKUMixPlacementDeploymentChoice
+	for _, choice := range response.PlacementChoices {
+		if choice == nil || choice.Score == nil {
+			continue
+		}
+		if best == nil || placementChoiceIsBetter(choice, best, input) {
+			best = choice
+		}
+	}
+	if best == nil {
+		return nil, fmt.Errorf("SKU Mix Placement response contained no valid placement choices")
+	}
+	return best, nil
+}
+
+func placementChoiceJSON(choice *armrecommender.SKUMixPlacementDeploymentChoice) string {
+	value, err := json.Marshal(choice)
+	if err != nil {
+		return fmt.Sprintf("<failed to marshal placement choice: %s>", err)
+	}
+	return string(value)
+}
+
+func placementChoiceIsBetter(
+	candidate *armrecommender.SKUMixPlacementDeploymentChoice,
+	current *armrecommender.SKUMixPlacementDeploymentChoice,
+	input *RankingInput,
+) bool {
+	// Only tiebreak among sizes that are equally scored in the API response
+	if *candidate.Score != *current.Score {
+		return *candidate.Score > *current.Score
+	}
+
+	requestedZones := make(map[string]struct{}, len(input.Zones))
+	for _, zone := range input.Zones {
+		requestedZones[zone] = struct{}{}
+	}
+
+	// Compare requested SKUs in input priority order. For
+	// each SKU, prefer more allocated capacity, then distribution across more
+	// requested zones. Only consider the next-ranked SKU when both are tied.
+	for _, vmSize := range input.VMSizes {
+		candidateCapacity, candidateZones := skuStats(candidate, vmSize, requestedZones)
+		currentCapacity, currentZones := skuStats(current, vmSize, requestedZones)
+		if candidateCapacity != currentCapacity {
+			return candidateCapacity > currentCapacity
+		}
+		if candidateZones != currentZones {
+			return candidateZones > currentZones
+		}
+	}
+
+	// If the choices allocate the requested SKUs equally, prefer the one spanning more
+	// of the requested zones. Preserve API order when both are equal.
+	return requestedZoneCoverage(candidate, requestedZones) > requestedZoneCoverage(current, requestedZones)
+}
+
+func skuStats(choice *armrecommender.SKUMixPlacementDeploymentChoice, vmSize string, requestedZones map[string]struct{}) (int32, int) {
+	var capacity int32
+	zones := make(map[string]struct{}, len(requestedZones))
+	for _, splitItem := range choice.SKUSplit {
+		if splitItem == nil || lo.FromPtr(splitItem.Name) != vmSize {
+			continue
+		}
+		// TODO: MaxCapacity when they have it?
+		capacity += lo.FromPtr(splitItem.Capacity)
+		if splitItem.Zone == nil {
+			continue
+		}
+		zone := lo.FromPtr(splitItem.Zone)
+		if _, ok := requestedZones[zone]; ok {
+			zones[zone] = struct{}{}
+		}
+	}
+	return capacity, len(zones)
+}
+
+func requestedZoneCoverage(choice *armrecommender.SKUMixPlacementDeploymentChoice, requestedZones map[string]struct{}) int {
+	covered := make(map[string]struct{}, len(requestedZones))
+	for _, split := range choice.SKUSplit {
+		if split == nil || split.Zone == nil {
+			continue
+		}
+		if _, ok := requestedZones[*split.Zone]; ok {
+			covered[*split.Zone] = struct{}{}
+		}
+	}
+	return len(covered)
 }
 
 func validateInput(input *RankingInput) error {
@@ -263,6 +366,8 @@ func validateInput(input *RankingInput) error {
 }
 
 func cacheKey(input *RankingInput) (string, error) {
+	zones := append([]string(nil), input.Zones...)
+	sort.Strings(zones)
 	value, err := hashstructure.Hash(struct {
 		CapacityType string
 		OSType       corev1.OSName
@@ -272,14 +377,21 @@ func cacheKey(input *RankingInput) (string, error) {
 		CapacityType: input.CapacityType,
 		OSType:       input.OSType,
 		VMSizes:      input.VMSizes,
-		Zones:        input.Zones,
-	}, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
+		Zones:        zones,
+	}, hashstructure.FormatV2, nil)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%016x", value), nil
 }
 
-func cloneRankedVMSizes(in []RankedVMSize) []RankedVMSize {
-	return append([]RankedVMSize(nil), in...)
+func cloneVMSplit(in []VMSplitItem) []VMSplitItem {
+	return append([]VMSplitItem(nil), in...)
+}
+
+func cloneRecommendation(in *Recommendation) *Recommendation {
+	if in == nil {
+		return nil
+	}
+	return &Recommendation{ID: in.ID, VMSplit: cloneVMSplit(in.VMSplit)}
 }
