@@ -35,6 +35,7 @@ import (
 const (
 	DiskEncryptionSetRBACMissing = "DiskEncryptionSetRBACMissing"
 	FIPSRequired                 = "FIPSRequired"
+	IncompatibleProvisionMode    = "IncompatibleProvisionMode"
 	// TODO: May want to rethink how we handle successful validation + potential for RBAC removal.
 	// See this PR comment for considerations:
 	// https://github.com/Azure/karpenter-provider-azure/pull/1372#discussion_r2795367386
@@ -101,6 +102,15 @@ func (r *ValidationReconciler) Reconcile(ctx context.Context, nodeClass *v1beta1
 			)
 			return reconcile.Result{}, nil
 		}
+	}
+	if lo.FromPtr(nodeClass.Spec.ImageFamily) == v1beta1.AzureContainerLinuxImageFamily &&
+		!options.FromContext(ctx).IsAKSMachineAPIMode() {
+		nodeClass.StatusConditions().SetFalse(
+			v1beta1.ConditionTypeValidationSucceeded,
+			IncompatibleProvisionMode,
+			"AzureContainerLinux requires an AKS Machine API provision mode",
+		)
+		return reconcile.Result{}, nil
 	}
 
 	// Check BYOK RBAC if DES ID is configured
