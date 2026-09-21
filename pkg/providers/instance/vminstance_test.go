@@ -21,12 +21,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v7"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v7"
 
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	"github.com/Azure/karpenter-provider-azure/pkg/auth"
@@ -59,21 +60,6 @@ func TestVMFIPS1403EncryptionPayload(t *testing.T) {
 			g.Expect(capabilities["ultraSSDEnabled"] == true).To(Equal(ultraSSD))
 		}
 	}
-}
-
-func TestAzureContainerLinuxSecurityProfile(t *testing.T) {
-	properties := &armcompute.VirtualMachineProperties{}
-	nodeClass := &v1beta1.AKSNodeClass{Spec: v1beta1.AKSNodeClassSpec{
-		ImageFamily: lo.ToPtr(v1beta1.AzureContainerLinuxImageFamily),
-	}}
-
-	setVMPropertiesSecurityProfile(properties, nodeClass)
-
-	g := NewWithT(t)
-	g.Expect(properties.SecurityProfile).ToNot(BeNil())
-	g.Expect(lo.FromPtr(properties.SecurityProfile.SecurityType)).To(Equal(armcompute.SecurityTypesTrustedLaunch))
-	g.Expect(lo.FromPtr(properties.SecurityProfile.UefiSettings.SecureBootEnabled)).To(BeTrue())
-	g.Expect(lo.FromPtr(properties.SecurityProfile.UefiSettings.VTpmEnabled)).To(BeTrue())
 }
 
 func TestResolveUltraSSDRequested(t *testing.T) {

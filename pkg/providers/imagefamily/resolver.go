@@ -172,10 +172,6 @@ func (r *defaultResolver) Resolve(
 		vtpmEnabled = nodeClass.Spec.Security.TrustedLaunch.VTPM
 		secureBootEnabled = nodeClass.Spec.Security.TrustedLaunch.SecureBoot
 	}
-	if lo.FromPtr(nodeClass.Spec.ImageFamily) == v1beta1.AzureContainerLinuxImageFamily {
-		vtpmEnabled = lo.ToPtr(true)
-		secureBootEnabled = lo.ToPtr(true)
-	}
 
 	// ATTENTION!!!: changes here will NOT be effective on AKS machine nodes (ProvisionModeAKSMachineAPI); See aksmachineinstance.go/aksmachineinstancehelpers.go.
 	// Refactoring for code unification is not being invested immediately.

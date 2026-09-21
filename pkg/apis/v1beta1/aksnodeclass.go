@@ -123,6 +123,7 @@ type AKSNodeClassSpec struct {
 	// Not exposed in the API yet
 	ImageID *string `json:"-"`
 	// imageFamily is the image family that instances use.
+	// AzureContainerLinux requires an AKS Machine API provision mode with shared image gallery (SIG) access.
 	// +default="Ubuntu"
 	// +kubebuilder:validation:Enum:={Ubuntu,Ubuntu2204,Ubuntu2404,AzureLinux,AzureContainerLinux}
 	// +optional
@@ -217,9 +218,13 @@ type Versions struct {
 // TrustedLaunch configures Trusted Launch security features for provisioned nodes.
 type TrustedLaunch struct {
 	// vtpm specifies whether virtual TPM should be enabled for provisioned nodes.
+	// Defaults to true for AzureContainerLinux and false for other image families.
+	// AzureContainerLinux does not allow explicitly disabling vTPM.
 	// +optional
 	VTPM *bool `json:"vtpm,omitempty"`
 	// secureBoot specifies whether Secure Boot should be enabled for provisioned nodes.
+	// Defaults to true for AzureContainerLinux and false for other image families.
+	// AzureContainerLinux does not allow explicitly disabling Secure Boot.
 	// +optional
 	SecureBoot *bool `json:"secureBoot,omitempty"`
 }
@@ -832,23 +837,17 @@ func (in *AKSNodeClass) GetCapacityReservationGroupID() string {
 }
 
 func (in *AKSNodeClass) IsVTPMEnabled() bool {
-	if lo.FromPtr(in.Spec.ImageFamily) == AzureContainerLinuxImageFamily {
-		return true
-	}
 	if in.Spec.Security != nil && in.Spec.Security.TrustedLaunch != nil && in.Spec.Security.TrustedLaunch.VTPM != nil {
 		return *in.Spec.Security.TrustedLaunch.VTPM
 	}
-	return false
+	return lo.FromPtr(in.Spec.ImageFamily) == AzureContainerLinuxImageFamily
 }
 
 func (in *AKSNodeClass) IsSecureBootEnabled() bool {
-	if lo.FromPtr(in.Spec.ImageFamily) == AzureContainerLinuxImageFamily {
-		return true
-	}
 	if in.Spec.Security != nil && in.Spec.Security.TrustedLaunch != nil && in.Spec.Security.TrustedLaunch.SecureBoot != nil {
 		return *in.Spec.Security.TrustedLaunch.SecureBoot
 	}
-	return false
+	return lo.FromPtr(in.Spec.ImageFamily) == AzureContainerLinuxImageFamily
 }
 
 // IsTrustedLaunchEnabled returns whether any Trusted Launch-backed setting is enabled.

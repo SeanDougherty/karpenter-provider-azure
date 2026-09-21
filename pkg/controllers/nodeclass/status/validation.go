@@ -33,9 +33,10 @@ import (
 )
 
 const (
-	DiskEncryptionSetRBACMissing = "DiskEncryptionSetRBACMissing"
-	FIPSRequired                 = "FIPSRequired"
-	IncompatibleProvisionMode    = "IncompatibleProvisionMode"
+	DiskEncryptionSetRBACMissing      = "DiskEncryptionSetRBACMissing"
+	FIPSRequired                      = "FIPSRequired"
+	IncompatibleProvisionMode         = "IncompatibleProvisionMode"
+	SIGRequiredForAzureContainerLinux = "SIGRequiredForAzureContainerLinux"
 	// TODO: May want to rethink how we handle successful validation + potential for RBAC removal.
 	// See this PR comment for considerations:
 	// https://github.com/Azure/karpenter-provider-azure/pull/1372#discussion_r2795367386
@@ -75,6 +76,14 @@ func (r *ValidationReconciler) Reconcile(ctx context.Context, nodeClass *v1beta1
 	if !validateFIPS(ctx, nodeClass) {
 		return reconcile.Result{}, nil
 	}
+	if reason := incompatibleACLConfiguration(ctx, nodeClass); reason != "" {
+		nodeClass.StatusConditions().SetFalse(
+			v1beta1.ConditionTypeValidationSucceeded,
+			reason,
+			"AzureContainerLinux requires an AKS Machine API provision mode and shared image gallery access (UseSIG=true)",
+		)
+		return reconcile.Result{}, nil
+	}
 
 	// A NodeClass requesting a Kata (Pod Sandboxing) workloadRuntime can only provision on a provision
 	// mode that can express the workload runtime. Surface the gap as a validation failure so the user
@@ -103,16 +112,6 @@ func (r *ValidationReconciler) Reconcile(ctx context.Context, nodeClass *v1beta1
 			return reconcile.Result{}, nil
 		}
 	}
-	if lo.FromPtr(nodeClass.Spec.ImageFamily) == v1beta1.AzureContainerLinuxImageFamily &&
-		!options.FromContext(ctx).IsAKSMachineAPIMode() {
-		nodeClass.StatusConditions().SetFalse(
-			v1beta1.ConditionTypeValidationSucceeded,
-			IncompatibleProvisionMode,
-			"AzureContainerLinux requires an AKS Machine API provision mode",
-		)
-		return reconcile.Result{}, nil
-	}
-
 	// Check BYOK RBAC if DES ID is configured
 	if r.parsedDiskEncryptionSetID != nil {
 		logger.V(1).Info("validating Disk Encryption Set RBAC")
@@ -149,6 +148,20 @@ func validateFIPS(ctx context.Context, nodeClass *v1beta1.AKSNodeClass) bool {
 		return false
 	}
 	return true
+}
+
+func incompatibleACLConfiguration(ctx context.Context, nodeClass *v1beta1.AKSNodeClass) string {
+	if lo.FromPtr(nodeClass.Spec.ImageFamily) != v1beta1.AzureContainerLinuxImageFamily {
+		return ""
+	}
+	opts := options.FromContext(ctx)
+	if !opts.IsAKSMachineAPIMode() {
+		return IncompatibleProvisionMode
+	}
+	if !opts.UseSIG {
+		return SIGRequiredForAzureContainerLinux
+	}
+	return ""
 }
 
 func (r *ValidationReconciler) validateDiskEncryptionSetRBAC(ctx context.Context) error {
