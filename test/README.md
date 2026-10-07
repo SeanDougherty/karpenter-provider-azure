@@ -8,6 +8,10 @@ These test scenarios are designed to be used against a live AKS cluster running 
 `DefaultAKSNodeClass`. It requires a Machine API `PROVISION_MODE`. Explicit
 image-family tests remain unchanged compatibility controls; a whole suite pass
 does not mean that those explicit Ubuntu/Azure Linux cases ran on ACL.
+Trusted Launch's optional/disabled-security controls explicitly retain
+Ubuntu2204; ACL's required Secure Boot and vTPM are covered by its dedicated
+automatic-enablement case. Selecting ACL globally must not turn those
+positive compatibility controls into invalid ACL requests.
 The Utilization suite adds an ACL variant of the existing pod-per-node check.
 ACL evidence is collected by the healthy-deployment, healthy-pod-count, and
 initialized-node helpers. Drift uses healthy-pod-count before and after

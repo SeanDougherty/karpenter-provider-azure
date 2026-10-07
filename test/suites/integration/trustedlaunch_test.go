@@ -31,6 +31,12 @@ import (
 )
 
 var _ = Describe("Trusted Launch", func() {
+	BeforeEach(func() {
+		// Optional-security controls need the original family; ACL requires
+		// both protections and is selected explicitly by its dedicated case.
+		nodeClass.Spec.ImageFamily = lo.ToPtr(v1beta1.Ubuntu2204ImageFamily)
+	})
+
 	It("should automatically enable vTPM and Secure Boot for AzureContainerLinux", func() {
 		if !env.IsAKSMachineAPIMode() || env.InClusterController {
 			Skip("AzureContainerLinux requires Machine API provisioning with managed SIG access")
