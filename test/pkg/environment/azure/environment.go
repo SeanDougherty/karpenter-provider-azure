@@ -255,7 +255,7 @@ func (env *Environment) UsesSharedImageGallery() bool {
 
 func (env *Environment) DefaultAKSNodeClass() *v1beta1.AKSNodeClass {
 	nodeClass := test.AKSNodeClass()
-	if env.TestImageFamily != "" {
+	if env != nil && env.TestImageFamily != "" {
 		nodeClass.Spec.ImageFamily = lo.ToPtr(env.TestImageFamily)
 	}
 	return nodeClass

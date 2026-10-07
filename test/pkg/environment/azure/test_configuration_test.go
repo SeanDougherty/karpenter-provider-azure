@@ -44,6 +44,14 @@ import (
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
+func TestDefaultNodeClassBeforeEnvironmentInitialization(t *testing.T) {
+	var env *Environment
+	nodeClass := env.DefaultAKSNodeClass()
+	if nodeClass.Spec.ImageFamily == nil || *nodeClass.Spec.ImageFamily != v1beta1.Ubuntu2204ImageFamily {
+		t.Fatal("spec-tree fixture construction must preserve the generic default before BeforeSuite")
+	}
+}
+
 func TestImageFamilySelection(t *testing.T) {
 	for _, tc := range []struct {
 		family    string

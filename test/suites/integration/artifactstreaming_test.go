@@ -107,12 +107,12 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 			// Automatic correctly forbids host-root mounts in workload namespaces.
 			Namespace: "kube-system",
 		},
-		Image: "mcr.microsoft.com/cbl-mariner/base/core:2.0",
+		Image: "mcr.microsoft.com/azurelinux/busybox:1.36",
 		Command: []string{
 			"sh", "-c",
 			`echo "=== Checking for artifact streaming indicators ===" && \
 			echo "--- Checking for overlaybd-tcmu process ---" && \
-			ps aux > /tmp/artifact-streaming-processes && \
+			ps > /tmp/artifact-streaming-processes && \
 			if grep -v grep /tmp/artifact-streaming-processes | grep -q overlaybd-tcmu; then \
 				echo "overlaybd-tcmu process FOUND"; \
 			else \
@@ -167,7 +167,10 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 		var currentPod corev1.Pod
 		g.Expect(env.Client.Get(env.Context, client.ObjectKey{Name: testPod.Name, Namespace: testPod.Namespace}, &currentPod)).To(Succeed())
 		if currentPod.Status.Phase == corev1.PodFailed {
-			StopTrying(fmt.Sprintf("artifact inspection pod failed: %+v", currentPod.Status.ContainerStatuses)).Now()
+			output, err := env.KubeClient.CoreV1().Pods(testPod.Namespace).GetLogs(testPod.Name, &corev1.PodLogOptions{
+				Container: testPod.Spec.Containers[0].Name,
+			}).DoRaw(env.Context)
+			StopTrying(fmt.Sprintf("artifact inspection pod failed: %+v; logs=%s; logError=%v", currentPod.Status.ContainerStatuses, output, err)).Now()
 		}
 		g.Expect(currentPod.Status.Phase).To(Equal(corev1.PodSucceeded))
 	}).WithTimeout(2 * time.Minute).Should(Succeed())

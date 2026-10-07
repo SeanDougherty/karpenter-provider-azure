@@ -44,6 +44,12 @@ Without these variables the normal ARM transport is unchanged.
 
 These are test-only inputs and do not require rebuilding the controller or CRD.
 
+The GPU table includes an explicit managed ACL case. It preserves the existing
+GPU resource/workload assertions and additionally verifies ACL node identity,
+Trusted Launch/Secure Boot/vTPM, a nonempty NVIDIA module signer, and
+`nvidia-smi -L` on the real GPU node. Simulated AIManager GPU nodes cannot
+satisfy this separate hardware check.
+
 ## File Directory
 - `/suites`: Ginkgo test suites for particular scenarios live here.
 - `/pkg`: Common code re-used across test suites lives here.
