@@ -110,7 +110,8 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 			"sh", "-c",
 			`echo "=== Checking for artifact streaming indicators ===" && \
 			echo "--- Checking for overlaybd-tcmu process ---" && \
-			if ps aux 2>/dev/null | grep -v grep | grep -q overlaybd-tcmu; then \
+			ps aux > /tmp/artifact-streaming-processes && \
+			if grep -v grep /tmp/artifact-streaming-processes | grep -q overlaybd-tcmu; then \
 				echo "overlaybd-tcmu process FOUND"; \
 			else \
 				echo "overlaybd-tcmu process NOT FOUND"; \
@@ -123,7 +124,7 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 					echo "overlaybd NOT FOUND in containerd config"; \
 				fi; \
 			else \
-				echo "containerd config file not found"; \
+				echo "containerd config file not found"; exit 1; \
 			fi && \
 			echo "=== Artifact streaming check complete ==="`,
 		},
@@ -163,15 +164,16 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 	Eventually(func(g Gomega) {
 		var currentPod corev1.Pod
 		g.Expect(env.Client.Get(env.Context, client.ObjectKey{Name: testPod.Name, Namespace: testPod.Namespace}, &currentPod)).To(Succeed())
-		g.Expect(currentPod.Status.Phase).To(Or(Equal(corev1.PodRunning), Equal(corev1.PodSucceeded)))
+		if currentPod.Status.Phase == corev1.PodFailed {
+			StopTrying(fmt.Sprintf("artifact inspection pod failed: %+v", currentPod.Status.ContainerStatuses)).Now()
+		}
+		g.Expect(currentPod.Status.Phase).To(Equal(corev1.PodSucceeded))
 	}).WithTimeout(2 * time.Minute).Should(Succeed())
 
 	var logs string
 	Eventually(func(g Gomega) {
 		g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(testPod), testPod)).To(Succeed())
-		if testPod.Status.Phase != corev1.PodRunning && testPod.Status.Phase != corev1.PodSucceeded {
-			return
-		}
+		g.Expect(testPod.Status.Phase).To(Equal(corev1.PodSucceeded))
 
 		req := env.KubeClient.CoreV1().Pods(testPod.Namespace).GetLogs(testPod.Name, &corev1.PodLogOptions{
 			Container: testPod.Spec.Containers[0].Name,
@@ -184,6 +186,7 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 		_, err = io.Copy(buf, podLogs)
 		g.Expect(err).To(Succeed())
 		logs = buf.String()
+		g.Expect(logs).To(ContainSubstring("=== Artifact streaming check complete ==="))
 	}).WithTimeout(artifactStreamingTestTimeout).Should(Succeed())
 
 	By(fmt.Sprintf("Artifact streaming check output from node %s:\n%s", node.Name, logs))

@@ -12,6 +12,9 @@ Trusted Launch's optional/disabled-security controls explicitly retain
 Ubuntu2204; ACL's required Secure Boot and vTPM are covered by its dedicated
 automatic-enablement case. Selecting ACL globally must not turn those
 positive compatibility controls into invalid ACL requests.
+Artifact-streaming host inspection waits for successful completion and complete
+output; missing host configuration or failed process inspection must not pass
+as evidence that streaming is disabled.
 The Utilization suite adds an ACL variant of the existing pod-per-node check.
 ACL evidence is collected by the healthy-deployment, healthy-pod-count, and
 initialized-node helpers. Drift uses healthy-pod-count before and after
