@@ -74,6 +74,7 @@ type Environment struct {
 	ClusterResourceGroup string
 	CloudConfig          cloud.Configuration
 	ProvisionMode        string
+	TestImageFamily      string
 
 	tracker *azure.Tracker
 
@@ -142,6 +143,7 @@ func NewEnvironment(t *testing.T) *Environment {
 		ClusterResourceGroup: readEnvRequired("AZURE_RESOURCE_GROUP"),
 		ACRName:              readEnvRequired("AZURE_ACR_NAME"),
 		ProvisionMode:        readEnvOptional("PROVISION_MODE"),
+		TestImageFamily:      readEnvOptional("TEST_AKS_IMAGE_FAMILY"),
 		Region:               lo.Ternary(os.Getenv("AZURE_LOCATION") == "", "westus2", os.Getenv("AZURE_LOCATION")),
 		CloudConfig:          cloudEnv.Cloud,
 		tracker:              azure.NewTracker(),
@@ -165,14 +167,16 @@ func NewEnvironment(t *testing.T) *Environment {
 			Cloud: azureEnv.CloudConfig,
 		},
 	}
+	aksOptions := *clientOptions
+	aksOptions.Transport = lo.Must(newAKSTestTransport(os.Getenv("TEST_AKS_PROXY_URL"), os.Getenv("TEST_AKS_PROXY_CA")))
 	rbacPropagationRetryOptions := azureEnv.ClientOptionsForRBACPropagation()
 	azureEnv.vmClient = lo.Must(armcompute.NewVirtualMachinesClient(azureEnv.SubscriptionID, cred, clientOptions))
 	azureEnv.vnetClient = lo.Must(armnetwork.NewVirtualNetworksClient(azureEnv.SubscriptionID, cred, clientOptions))
 	azureEnv.subnetClient = lo.Must(armnetwork.NewSubnetsClient(azureEnv.SubscriptionID, cred, clientOptions))
 	azureEnv.interfacesClient = lo.Must(armnetwork.NewInterfacesClient(azureEnv.SubscriptionID, cred, clientOptions))
-	azureEnv.managedClusterClient = lo.Must(containerservice.NewManagedClustersClient(azureEnv.SubscriptionID, cred, clientOptions))
-	azureEnv.agentPoolClient = lo.Must(containerservice.NewAgentPoolsClient(azureEnv.SubscriptionID, cred, clientOptions))
-	azureEnv.machinesClient = lo.Must(containerservice.NewMachinesClient(azureEnv.SubscriptionID, cred, clientOptions))
+	azureEnv.managedClusterClient = lo.Must(containerservice.NewManagedClustersClient(azureEnv.SubscriptionID, cred, &aksOptions))
+	azureEnv.agentPoolClient = lo.Must(containerservice.NewAgentPoolsClient(azureEnv.SubscriptionID, cred, &aksOptions))
+	azureEnv.machinesClient = lo.Must(containerservice.NewMachinesClient(azureEnv.SubscriptionID, cred, &aksOptions))
 	azureEnv.KeyVaultClient = lo.Must(armkeyvault.NewVaultsClient(azureEnv.SubscriptionID, cred, rbacPropagationRetryOptions))
 	azureEnv.DiskEncryptionSetClient = lo.Must(armcompute.NewDiskEncryptionSetsClient(azureEnv.SubscriptionID, cred, rbacPropagationRetryOptions))
 	// Reuses the RBAC-propagation retry options: tests grant a role on the group and then
@@ -189,6 +193,7 @@ func NewEnvironment(t *testing.T) *Environment {
 	if azureEnv.ProvisionMode == "" {
 		azureEnv.ProvisionMode = consts.ProvisionModeAKSScriptless
 	}
+	lo.Must0(validateTestImageFamily(azureEnv.TestImageFamily, azureEnv.IsAKSMachineAPIMode()))
 	// Default to reserved managed machine agentpool name for NAP
 	azureEnv.MachineAgentPoolName = "aksmanagedap"
 	if azureEnv.InClusterController {
@@ -250,6 +255,9 @@ func (env *Environment) UsesSharedImageGallery() bool {
 
 func (env *Environment) DefaultAKSNodeClass() *v1beta1.AKSNodeClass {
 	nodeClass := test.AKSNodeClass()
+	if env.TestImageFamily != "" {
+		nodeClass.Spec.ImageFamily = lo.ToPtr(env.TestImageFamily)
+	}
 	return nodeClass
 }
 

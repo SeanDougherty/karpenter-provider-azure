@@ -54,6 +54,13 @@ var _ = AfterEach(func() { env.Cleanup() })
 var _ = AfterEach(func() { env.AfterEach() })
 
 var _ = Describe("Utilization", func() {
+	It("should provision one pod per node for the selected ACL test family", func() {
+		if env.TestImageFamily != v1beta1.AzureContainerLinuxImageFamily {
+			Skip("ACL test family not selected")
+		}
+		ExpectProvisionPodPerNode(nodeClass, nodePool)
+	})
+
 	DescribeTable("should provision one pod per node",
 		func(imageFamily string, arch string) {
 			nodeClass := env.DefaultAKSNodeClass()
