@@ -28,9 +28,9 @@ func verifyACLGPUNode(node *corev1.Node) {
 		Image:      "mcr.microsoft.com/azurelinux/busybox:1.36",
 		Command: []string{"sh", "-ec", `chroot /host /bin/sh -ec '
 signer="$(modinfo -F signer nvidia)"
-test -n "$signer"
 printf "ACL_GPU_DRIVER_SIGNER=%s\n" "$signer"
 nvidia-smi -L
+test -n "$signer"
 echo ACL_GPU_PROBE_COMPLETE
 '`},
 		NodeSelector:  map[string]string{corev1.LabelHostname: node.Name},
