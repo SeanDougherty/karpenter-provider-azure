@@ -103,7 +103,9 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 	testPod := env.Pod(coretest.PodOptions{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "artifact-streaming-check-",
-			Namespace:    "default",
+			// Host inspection belongs in the managed operational namespace;
+			// Automatic correctly forbids host-root mounts in workload namespaces.
+			Namespace: "kube-system",
 		},
 		Image: "mcr.microsoft.com/cbl-mariner/base/core:2.0",
 		Command: []string{
