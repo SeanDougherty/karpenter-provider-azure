@@ -22,8 +22,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	azfake "github.com/Azure/azure-sdk-for-go/sdk/azcore/fake"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	containerservice "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	"github.com/Azure/karpenter-provider-azure/test/pkg/environment/common"
 	"github.com/onsi/ginkgo/v2"
@@ -101,7 +106,7 @@ func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 				v1beta1.AKSLabelOSSKU:                     v1beta1.OSSKUAzureContainerLinux,
 				"kubernetes.azure.com/node-image-version": "AKSAzureLinux-aclgen2TL-202609.23.0",
 			},
-			Annotations: map[string]string{v1beta1.AnnotationAKSMachineResourceID: "/agentPools/aksmanagedap/machines/test"},
+			Annotations: map[string]string{v1beta1.AnnotationAKSMachineResourceID: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ContainerService/managedClusters/cluster/agentPools/aksmanagedap/machines/test"},
 		}}
 		pool := &karpv1.NodePool{ObjectMeta: metav1.ObjectMeta{Name: "pool"}}
 		pool.Spec.Template.Spec.NodeClassRef = &karpv1.NodeClassReference{Group: v1beta1.Group, Kind: v1beta1.AKSNodeClassKind, Name: "class"}
@@ -115,6 +120,20 @@ func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 				Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
 			})
 		}
+		machineCalls := 0
+		machines, err := containerservice.NewMachinesClient("sub", &azfake.TokenCredential{}, &arm.ClientOptions{
+			ClientOptions: policy.ClientOptions{Transport: machineTestTransport(func(req *http.Request) (*http.Response, error) {
+				machineCalls++
+				if !strings.HasSuffix(req.URL.Path, "/agentPools/aksmanagedap/machines/test") {
+					t.Errorf("unexpected machine evidence path: %s", req.URL.Path)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{"properties":{"status":{"driftAction":"Synced"}}}`)), Request: req}, nil
+			})},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 		env := &Environment{
 			Environment: &common.Environment{
 				Context:    t.Context(),
@@ -122,11 +141,18 @@ func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 				Monitor:    common.NewMonitor(t.Context(), client),
 				KubeClient: kubefake.NewClientset(networkPods...),
 			},
-			TestImageFamily: v1beta1.AzureContainerLinuxImageFamily,
+			TestImageFamily:      v1beta1.AzureContainerLinuxImageFamily,
+			ClusterResourceGroup: "rg",
+			ClusterName:          "cluster",
+			MachineAgentPoolName: "aksmanagedap",
+			machinesClient:       machines,
 		}
 		selector := labels.SelectorFromSet(pod.Labels)
 		if pods := env.EventuallyExpectHealthyPodCount(selector, 1); len(pods) != 1 {
 			t.Fatal("healthy pod not returned")
+		}
+		if machineCalls != 1 {
+			t.Fatal("machine drift state was not captured")
 		}
 		node.Labels[v1beta1.AKSLabelOSSKU] = "Ubuntu"
 		if err := client.Update(t.Context(), node); err != nil {
@@ -142,6 +168,12 @@ func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 		}
 	})
 	ginkgo.RunSpecs(t, "ACL Lifecycle Evidence")
+}
+
+type machineTestTransport func(*http.Request) (*http.Response, error)
+
+func (t machineTestTransport) Do(req *http.Request) (*http.Response, error) {
+	return t(req)
 }
 
 func TestAKSTestTransport(t *testing.T) {

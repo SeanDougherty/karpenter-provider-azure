@@ -93,9 +93,16 @@ func (env *Environment) expectACLNodeEvidence(name string) {
 		g.Expect(ready["azure-cns"]).To(BeTrue(), "CNS must be Ready on %s", node.Name)
 		g.Expect(ready["cilium"]).To(BeTrue(), "Cilium must be Ready on %s", node.Name)
 	}).Should(Succeed())
-	fmt.Fprintf(GinkgoWriter, "ACL lifecycle evidence: node=%s pool=%s nodeClass=%s image=%s machine=%s CNS/Cilium=Ready\n",
+	machineID := node.Annotations[v1beta1.AnnotationAKSMachineResourceID]
+	machine := env.ExpectMachineByID(machineID)
+	driftAction, driftReason := "", ""
+	if machine.Properties != nil && machine.Properties.Status != nil {
+		driftAction = string(lo.FromPtr(machine.Properties.Status.DriftAction))
+		driftReason = lo.FromPtr(machine.Properties.Status.DriftReason)
+	}
+	fmt.Fprintf(GinkgoWriter, "ACL lifecycle evidence: node=%s pool=%s nodeClass=%s image=%s machine=%s machineDriftAction=%q machineDriftReason=%q CNS/Cilium=Ready\n",
 		node.Name, pool.Name, nodeClass.Name, node.Labels["kubernetes.azure.com/node-image-version"],
-		node.Annotations[v1beta1.AnnotationAKSMachineResourceID])
+		machineID, driftAction, driftReason)
 }
 
 func validateACLNodeIdentity(node *corev1.Node) error {

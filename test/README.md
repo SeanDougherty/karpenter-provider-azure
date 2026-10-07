@@ -12,6 +12,9 @@ The Utilization suite adds an ACL variant of the existing pod-per-node check.
 ACL evidence is collected by the healthy-deployment, healthy-pod-count, and
 initialized-node helpers. Drift uses healthy-pod-count before and after
 replacement; generic helpers must not bypass the optional ACL checks.
+Evidence also records the Machine's drift action/reason. NodeClaim debug
+updates include drift, deletion, and hash-version transitions so an existing
+drift reason can be distinguished from a mutation performed by a test.
 
 Standalone runners may supply `TEST_AKS_PROXY_URL` (a loopback HTTPS origin) and
 `TEST_AKS_PROXY_CA` (its CA file). Only ContainerService API calls use this

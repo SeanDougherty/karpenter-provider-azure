@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -57,11 +58,21 @@ func (c *NodeClaimController) Reconcile(ctx context.Context, req reconcile.Reque
 }
 
 func (c *NodeClaimController) GetInfo(nc *karpv1.NodeClaim) string {
-	return fmt.Sprintf("ready=%t launched=%t registered=%t initialized=%t",
+	driftReason := ""
+	drifted := nc.StatusConditions().Get(karpv1.ConditionTypeDrifted)
+	if drifted != nil {
+		driftReason = drifted.Reason
+	}
+	return fmt.Sprintf("ready=%t launched=%t registered=%t initialized=%t drifted=%t driftReason=%q deleting=%t nodeClassHash=%q nodeClassHashVersion=%q",
 		nc.StatusConditions().Root().IsTrue(),
 		nc.StatusConditions().Get(karpv1.ConditionTypeLaunched).IsTrue(),
 		nc.StatusConditions().Get(karpv1.ConditionTypeRegistered).IsTrue(),
 		nc.StatusConditions().Get(karpv1.ConditionTypeInitialized).IsTrue(),
+		drifted != nil && drifted.IsTrue(),
+		driftReason,
+		nc.DeletionTimestamp != nil,
+		nc.Annotations[v1beta1.AnnotationAKSNodeClassHash],
+		nc.Annotations[v1beta1.AnnotationAKSNodeClassHashVersion],
 	)
 }
 
