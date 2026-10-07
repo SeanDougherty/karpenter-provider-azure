@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
@@ -43,5 +45,11 @@ func TestNodeClaimInfoCapturesDriftTransitions(t *testing.T) {
 	deleting := controller.GetInfo(claim)
 	if deleting == hashed || !strings.Contains(deleting, "deleting=true") {
 		t.Fatal("debug update predicate would miss deletion transition")
+	}
+	claim.Status.Allocatable = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("7800m")}
+	claim.Finalizers = []string{"testing/finalizer"}
+	capacity := controller.GetInfo(claim)
+	if capacity == deleting || !strings.Contains(capacity, "allocatable=") || !strings.Contains(capacity, "testing/finalizer") {
+		t.Fatal("diagnostics must capture budget fixture capacity and finalizers")
 	}
 }

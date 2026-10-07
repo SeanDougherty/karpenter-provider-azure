@@ -64,6 +64,9 @@ func (c *PodController) GetInfo(p *corev1.Pod) string {
 		if containerInfo.Len() > 0 {
 			_ = lo.Must(fmt.Fprintf(&containerInfo, ", "))
 		}
+		for _, container := range p.Spec.Containers {
+			_ = lo.Must(fmt.Fprintf(&containerInfo, " %s requests=%v limits=%v", container.Name, container.Resources.Requests, container.Resources.Limits))
+		}
 		_ = lo.Must(fmt.Fprintf(&containerInfo, "%s restarts=%d", c.Name, c.RestartCount))
 	}
 	return fmt.Sprintf("provisionable=%v phase=%s nodename=%s owner=%#v [%s]",

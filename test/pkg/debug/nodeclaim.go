@@ -63,7 +63,7 @@ func (c *NodeClaimController) GetInfo(nc *karpv1.NodeClaim) string {
 	if drifted != nil {
 		driftReason = drifted.Reason
 	}
-	return fmt.Sprintf("ready=%t launched=%t registered=%t initialized=%t drifted=%t driftReason=%q deleting=%t nodeClassHash=%q nodeClassHashVersion=%q",
+	return fmt.Sprintf("ready=%t launched=%t registered=%t initialized=%t drifted=%t driftReason=%q deleting=%t nodeClassHash=%q nodeClassHashVersion=%q instanceType=%q capacity=%v allocatable=%v finalizers=%v",
 		nc.StatusConditions().Root().IsTrue(),
 		nc.StatusConditions().Get(karpv1.ConditionTypeLaunched).IsTrue(),
 		nc.StatusConditions().Get(karpv1.ConditionTypeRegistered).IsTrue(),
@@ -73,6 +73,10 @@ func (c *NodeClaimController) GetInfo(nc *karpv1.NodeClaim) string {
 		nc.DeletionTimestamp != nil,
 		nc.Annotations[v1beta1.AnnotationAKSNodeClassHash],
 		nc.Annotations[v1beta1.AnnotationAKSNodeClassHashVersion],
+		nc.Labels["node.kubernetes.io/instance-type"],
+		nc.Status.Capacity,
+		nc.Status.Allocatable,
+		nc.Finalizers,
 	)
 }
 
