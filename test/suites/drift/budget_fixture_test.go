@@ -24,7 +24,9 @@ import (
 
 func budgetPackingConstraints() []corev1.TopologySpreadConstraint {
 	return []corev1.TopologySpreadConstraint{{
-		MaxSkew:           1,
+		// As in the upstream budget fixture, allow three pods per hostname.
+		// System-pool domains have no matching pods and must not force one per node.
+		MaxSkew:           3,
 		TopologyKey:       corev1.LabelHostname,
 		WhenUnsatisfiable: corev1.DoNotSchedule,
 		LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"app": "large-app"}},
@@ -37,7 +39,7 @@ func TestBudgetPackingConstraints(t *testing.T) {
 		t.Fatal("budget fixture must define its topology explicitly")
 	}
 	c := constraints[0]
-	if c.MaxSkew != 1 || c.TopologyKey != corev1.LabelHostname ||
+	if c.MaxSkew != 3 || c.TopologyKey != corev1.LabelHostname ||
 		c.WhenUnsatisfiable != corev1.DoNotSchedule || c.LabelSelector.MatchLabels["app"] != "large-app" {
 		t.Fatalf("incorrect budget packing constraint: %+v", c)
 	}
