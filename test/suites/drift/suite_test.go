@@ -152,6 +152,7 @@ var _ = Describe("Drift", func() {
 
 			env.EventuallyExpectDrifted(nodeClaims...)
 
+			env.EventuallyExpectTaintedNodeCount(">", 0)
 			env.ConsistentlyExpectDisruptionsUntilNoneLeft(3, 2, 5*time.Minute)
 		})
 		It("should respect budgets for non-empty delete drift", func() {
@@ -225,6 +226,7 @@ var _ = Describe("Drift", func() {
 				env.ExpectUpdated(pod)
 			}
 
+			env.EventuallyExpectTaintedNodeCount(">", 0)
 			env.ConsistentlyExpectDisruptionsUntilNoneLeft(3, 2, 5*time.Minute)
 		})
 		It("should respect budgets for non-empty replace drift", func() {

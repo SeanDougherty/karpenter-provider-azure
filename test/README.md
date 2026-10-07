@@ -20,6 +20,15 @@ NodeClass's requested version exactly. An RC kubelet advertised as a final
 release is a lifecycle precondition failure, not a reason to suppress the
 provider's version-drift detection.
 
+Drift's CPU-packing budget fixtures declare hostname topology explicitly so
+Automatic Safeguards does not inject anti-affinity that changes their node count.
+The delete-budget cases wait for a disruption to start before checking its
+concurrency. Budget accounting excludes nodes retained by the testing finalizer
+only after Karpenter removes its termination finalizer, even when the NodeClaim's
+`InstanceTerminating` condition was not persisted on the instance-not-found path.
+Deletion starting alone is not sufficient. The node/claim ceilings and
+zero-active-disruptions assertion remain unchanged.
+
 Standalone runners may supply `TEST_AKS_PROXY_URL` (a loopback HTTPS origin) and
 `TEST_AKS_PROXY_CA` (its CA file). Only ContainerService API calls use this
 bridge; Compute and Network requests continue to real ARM. The trusted local
