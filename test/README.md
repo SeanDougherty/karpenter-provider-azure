@@ -46,9 +46,16 @@ These are test-only inputs and do not require rebuilding the controller or CRD.
 
 The GPU table includes an explicit managed ACL case. It preserves the existing
 GPU resource/workload assertions and additionally verifies ACL node identity,
-Trusted Launch/Secure Boot/vTPM, a nonempty NVIDIA module signer, and
-`nvidia-smi -L` on the real GPU node. Simulated AIManager GPU nodes cannot
-satisfy this separate hardware check.
+Trusted Launch/Secure Boot/vTPM, and `nvidia-smi -L` on a real
+`Standard_NV6ads_A10_v5` node. ACL installs its driver through a system
+extension, so an empty individual module-signer field alone does not establish
+a signing failure.
+The test checks the loaded module version and active extension, and compares
+the actual extension bytes against the pinned raw layer of a Microsoft-signed
+OCI manifest (Notation strict verification using Microsoft Supply Chain RSA
+Root CA 2022). Reverify that artifact's signature before updating the pinned
+hash. This qualifies the pinned 3.0.20260809 vGPU extension, not every GPU
+driver variant. Simulated AIManager GPU nodes cannot satisfy this hardware check.
 
 ## File Directory
 - `/suites`: Ginkgo test suites for particular scenarios live here.

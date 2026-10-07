@@ -71,6 +71,12 @@ var _ = Describe("GPU", func() {
 				Key:      v1beta1.LabelSKUFamily,
 				Operator: corev1.NodeSelectorOpExists,
 			})
+			if lo.FromPtr(nodeClass.Spec.ImageFamily) == v1beta1.AzureContainerLinuxImageFamily {
+				test.ReplaceRequirements(nodePool, karpv1.NodeSelectorRequirementWithMinValues{
+					Key: corev1.LabelInstanceTypeStable, Operator: corev1.NodeSelectorOpIn,
+					Values: []string{"Standard_NV6ads_A10_v5"},
+				})
+			}
 
 			nodePool.Spec.Limits = karpv1.Limits{
 				corev1.ResourceCPU:                    resource.MustParse("25"),

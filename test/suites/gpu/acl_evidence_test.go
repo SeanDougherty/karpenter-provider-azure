@@ -14,6 +14,11 @@ import (
 	coretest "sigs.k8s.io/karpenter/pkg/test"
 )
 
+// Verify this ACL vGPU fixture at the signed system-extension layer.
+// This raw layer belongs to the strictly Notation-verified Microsoft artifact
+// nvidia-driver-vgpu@sha256:621b9dd4a862bcd71255f1461bc45f60ee6e2a6176ce6b336bac2f08fc9c433a.
+const aclVGPUDriverSHA256 = "c811e7314f083d4238249e20f3552f07eba66f07d2636237f2f6106baddc52b5"
+
 func verifyACLGPUNode(node *corev1.Node) {
 	vm := env.GetVM(node.Name)
 	Expect(vm.Properties).ToNot(BeNil())
@@ -30,7 +35,12 @@ func verifyACLGPUNode(node *corev1.Node) {
 signer="$(modinfo -F signer nvidia)"
 printf "ACL_GPU_DRIVER_SIGNER=%s\n" "$signer"
 nvidia-smi -L
-test -n "$signer"
+test "$(cat /sys/module/nvidia/version)" = "$(modinfo -F version nvidia)"
+sysext_status="$(systemd-sysext status --json=short)"
+printf "%s\n" "$sysext_status"
+printf "%s\n" "$sysext_status" | grep -q "\"nvidia-driver-vgpu\""
+printf "ACL_GPU_SYSEXT_SHA256="
+sha256sum /etc/extensions/nvidia-driver-vgpu.raw
 echo ACL_GPU_PROBE_COMPLETE
 '`},
 		NodeSelector:  map[string]string{corev1.LabelHostname: node.Name},
@@ -53,8 +63,9 @@ echo ACL_GPU_PROBE_COMPLETE
 		g.Expect(pod.Status.Phase).To(Equal(corev1.PodSucceeded))
 	}).WithTimeout(2 * time.Minute).Should(Succeed())
 	output := env.EventuallyGetPodLogs(pod)
-	Expect(output).To(MatchRegexp(`(?m)^ACL_GPU_DRIVER_SIGNER=.+$`))
 	Expect(output).To(ContainSubstring("GPU 0:"))
+	Expect(output).To(ContainSubstring("nvidia-driver-vgpu"))
+	Expect(output).To(MatchRegexp(`(?m)^ACL_GPU_SYSEXT_SHA256=` + aclVGPUDriverSHA256 + `\s`))
 	Expect(output).To(ContainSubstring("ACL_GPU_PROBE_COMPLETE"))
 	By("ACL GPU driver evidence:\n" + output)
 }
