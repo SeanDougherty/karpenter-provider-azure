@@ -9,6 +9,9 @@ These test scenarios are designed to be used against a live AKS cluster running 
 image-family tests remain unchanged compatibility controls; a whole suite pass
 does not mean that those explicit Ubuntu/Azure Linux cases ran on ACL.
 The Utilization suite adds an ACL variant of the existing pod-per-node check.
+ACL evidence is collected by the healthy-deployment, healthy-pod-count, and
+initialized-node helpers. Drift uses healthy-pod-count before and after
+replacement; generic helpers must not bypass the optional ACL checks.
 
 Standalone runners may supply `TEST_AKS_PROXY_URL` (a loopback HTTPS origin) and
 `TEST_AKS_PROXY_CA` (its CA file). Only ContainerService API calls use this

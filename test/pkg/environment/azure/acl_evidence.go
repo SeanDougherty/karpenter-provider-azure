@@ -26,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
@@ -33,6 +34,15 @@ import (
 func (env *Environment) EventuallyExpectHealthyDeployment(deployment *appsv1.Deployment) []*corev1.Pod {
 	GinkgoHelper()
 	pods := env.Environment.EventuallyExpectHealthyDeployment(deployment)
+	for _, pod := range pods {
+		env.expectACLNodeEvidence(pod.Spec.NodeName)
+	}
+	return pods
+}
+
+func (env *Environment) EventuallyExpectHealthyPodCount(selector labels.Selector, count int) []*corev1.Pod {
+	GinkgoHelper()
+	pods := env.Environment.EventuallyExpectHealthyPodCount(selector, count)
 	for _, pod := range pods {
 		env.expectACLNodeEvidence(pod.Spec.NodeName)
 	}

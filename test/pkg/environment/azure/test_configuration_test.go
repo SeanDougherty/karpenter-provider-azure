@@ -24,8 +24,19 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
+	"github.com/Azure/karpenter-provider-azure/test/pkg/environment/common"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	kubefake "k8s.io/client-go/kubernetes/fake"
+	kubescheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 func TestImageFamilySelection(t *testing.T) {
@@ -69,6 +80,68 @@ func TestACLNodeIdentity(t *testing.T) {
 			t.Errorf("accepted missing identity %s", key)
 		}
 	}
+}
+
+func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.It("enforces optional ACL identity through the healthy pod count helper", func() {
+		scheme := kubescheme.Scheme
+		if err := v1beta1.SchemeBuilder.AddToScheme(scheme); err != nil {
+			t.Fatal(err)
+		}
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "workload", Namespace: "default", Labels: map[string]string{"app": "proof"}},
+			Spec:       corev1.PodSpec{NodeName: "acl-node"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		}
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+			Name: "acl-node",
+			Labels: map[string]string{
+				karpv1.NodePoolLabelKey:                   "pool",
+				v1beta1.AKSLabelOSSKU:                     v1beta1.OSSKUAzureContainerLinux,
+				"kubernetes.azure.com/node-image-version": "AKSAzureLinux-aclgen2TL-202609.23.0",
+			},
+			Annotations: map[string]string{v1beta1.AnnotationAKSMachineResourceID: "/agentPools/aksmanagedap/machines/test"},
+		}}
+		pool := &karpv1.NodePool{ObjectMeta: metav1.ObjectMeta{Name: "pool"}}
+		pool.Spec.Template.Spec.NodeClassRef = &karpv1.NodeClassReference{Group: v1beta1.Group, Kind: v1beta1.AKSNodeClassKind, Name: "class"}
+		nodeClass := &v1beta1.AKSNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "class"}, Spec: v1beta1.AKSNodeClassSpec{ImageFamily: lo.ToPtr(v1beta1.AzureContainerLinuxImageFamily)}}
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, node, pool, nodeClass).Build()
+		networkPods := []runtime.Object{}
+		for _, app := range []string{"azure-cns", "cilium"} {
+			networkPods = append(networkPods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: app, Namespace: "kube-system", Labels: map[string]string{"k8s-app": app}},
+				Spec:       corev1.PodSpec{NodeName: node.Name},
+				Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+			})
+		}
+		env := &Environment{
+			Environment: &common.Environment{
+				Context:    t.Context(),
+				Client:     client,
+				Monitor:    common.NewMonitor(t.Context(), client),
+				KubeClient: kubefake.NewClientset(networkPods...),
+			},
+			TestImageFamily: v1beta1.AzureContainerLinuxImageFamily,
+		}
+		selector := labels.SelectorFromSet(pod.Labels)
+		if pods := env.EventuallyExpectHealthyPodCount(selector, 1); len(pods) != 1 {
+			t.Fatal("healthy pod not returned")
+		}
+		node.Labels[v1beta1.AKSLabelOSSKU] = "Ubuntu"
+		if err := client.Update(t.Context(), node); err != nil {
+			t.Fatal(err)
+		}
+		failures := gomega.InterceptGomegaFailures(func() { env.EventuallyExpectHealthyPodCount(selector, 1) })
+		if len(failures) == 0 {
+			t.Fatal("healthy pod helper bypassed ACL identity validation")
+		}
+		env.TestImageFamily = ""
+		if failures := gomega.InterceptGomegaFailures(func() { env.EventuallyExpectHealthyPodCount(selector, 1) }); len(failures) != 0 {
+			t.Fatalf("generic pod helper changed: %v", failures)
+		}
+	})
+	ginkgo.RunSpecs(t, "ACL Lifecycle Evidence")
 }
 
 func TestAKSTestTransport(t *testing.T) {
