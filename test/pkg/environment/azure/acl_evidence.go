@@ -74,6 +74,9 @@ func (env *Environment) expectACLNodeEvidence(name string) {
 		return
 	}
 	Expect(validateACLNodeIdentity(node)).To(Succeed())
+	expectedVersion, err := nodeClass.GetKubernetesVersion()
+	Expect(err).ToNot(HaveOccurred())
+	Expect(validateACLNodeVersion(node, expectedVersion)).To(Succeed())
 	Eventually(func(g Gomega) {
 		pods, err := env.KubeClient.CoreV1().Pods("kube-system").List(env, metav1.ListOptions{
 			FieldSelector: "spec.nodeName=" + node.Name,
@@ -114,6 +117,14 @@ func validateACLNodeIdentity(node *corev1.Node) error {
 	}
 	if !strings.Contains(strings.ToLower(node.Annotations[v1beta1.AnnotationAKSMachineResourceID]), "/agentpools/aksmanagedap/machines/") {
 		return fmt.Errorf("ACL node %s lacks a managed Machine resource annotation", node.Name)
+	}
+	return nil
+}
+
+func validateACLNodeVersion(node *corev1.Node, expected string) error {
+	actual := strings.TrimPrefix(node.Status.NodeInfo.KubeletVersion, "v")
+	if expected == "" || actual != expected {
+		return fmt.Errorf("ACL node %s kubelet version %q differs from NodeClass version %q; lifecycle drift precondition is invalid", node.Name, actual, expected)
 	}
 	return nil
 }

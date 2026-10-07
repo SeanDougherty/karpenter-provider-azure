@@ -15,6 +15,10 @@ replacement; generic helpers must not bypass the optional ACL checks.
 Evidence also records the Machine's drift action/reason. NodeClaim debug
 updates include drift, deletion, and hash-version transitions so an existing
 drift reason can be distinguished from a mutation performed by a test.
+ACL workload evidence requires the real kubelet version to match the
+NodeClass's requested version exactly. An RC kubelet advertised as a final
+release is a lifecycle precondition failure, not a reason to suppress the
+provider's version-drift detection.
 
 Standalone runners may supply `TEST_AKS_PROXY_URL` (a loopback HTTPS origin) and
 `TEST_AKS_PROXY_CA` (its CA file). Only ContainerService API calls use this

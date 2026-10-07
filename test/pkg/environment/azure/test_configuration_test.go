@@ -111,6 +111,9 @@ func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 		pool := &karpv1.NodePool{ObjectMeta: metav1.ObjectMeta{Name: "pool"}}
 		pool.Spec.Template.Spec.NodeClassRef = &karpv1.NodeClassReference{Group: v1beta1.Group, Kind: v1beta1.AKSNodeClassKind, Name: "class"}
 		nodeClass := &v1beta1.AKSNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "class"}, Spec: v1beta1.AKSNodeClassSpec{ImageFamily: lo.ToPtr(v1beta1.AzureContainerLinuxImageFamily)}}
+		node.Status.NodeInfo.KubeletVersion = "v1.36.4"
+		nodeClass.Status.KubernetesVersion = lo.ToPtr("1.36.4")
+		nodeClass.StatusConditions().SetTrue(v1beta1.ConditionTypeKubernetesVersionReady)
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, node, pool, nodeClass).Build()
 		networkPods := []runtime.Object{}
 		for _, app := range []string{"azure-cns", "cilium"} {
@@ -174,6 +177,24 @@ type machineTestTransport func(*http.Request) (*http.Response, error)
 
 func (t machineTestTransport) Do(req *http.Request) (*http.Response, error) {
 	return t(req)
+}
+
+func TestACLNodeVersion(t *testing.T) {
+	for _, tc := range []struct {
+		actual, expected string
+		wantError        bool
+	}{
+		{"v1.36.4", "1.36.4", false},
+		{"v1.37.0-rc.0", "1.37.0", true},
+		{"v1.36.3", "1.36.4", true},
+		{"", "1.36.4", true},
+		{"v1.36.4", "", true},
+	} {
+		node := &corev1.Node{Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: tc.actual}}}
+		if err := validateACLNodeVersion(node, tc.expected); (err != nil) != tc.wantError {
+			t.Errorf("version %q expected %q: %v", tc.actual, tc.expected, err)
+		}
+	}
 }
 
 func TestAKSTestTransport(t *testing.T) {
