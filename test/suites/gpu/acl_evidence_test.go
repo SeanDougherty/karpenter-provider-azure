@@ -45,7 +45,10 @@ echo ACL_GPU_PROBE_COMPLETE
 	Eventually(func(g Gomega) {
 		g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(pod), pod)).To(Succeed())
 		if pod.Status.Phase == corev1.PodFailed {
-			StopTrying(fmt.Sprintf("ACL GPU driver inspection failed: %+v", pod.Status.ContainerStatuses)).Now()
+			output, err := env.KubeClient.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+				Container: pod.Spec.Containers[0].Name,
+			}).DoRaw(env.Context)
+			StopTrying(fmt.Sprintf("ACL GPU driver inspection failed: %+v; logs=%s; logError=%v", pod.Status.ContainerStatuses, output, err)).Now()
 		}
 		g.Expect(pod.Status.Phase).To(Equal(corev1.PodSucceeded))
 	}).WithTimeout(2 * time.Minute).Should(Succeed())
