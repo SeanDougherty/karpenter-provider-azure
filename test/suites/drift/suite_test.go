@@ -113,6 +113,9 @@ var _ = Describe("Drift", func() {
 						},
 						Labels: map[string]string{"app": "large-app"},
 					},
+					// Explicit spreading preserves CPU packing on Automatic, which
+					// otherwise injects preferred anti-affinity for each replica.
+					TopologySpreadConstraints: budgetPackingConstraints(),
 					// Each node has 8 cpus, so should fit 2 pods.
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
@@ -173,6 +176,7 @@ var _ = Describe("Drift", func() {
 						},
 						Labels: map[string]string{"app": "large-app"},
 					},
+					TopologySpreadConstraints: budgetPackingConstraints(),
 					// Each node has 8 cpu, so should fit no more than 3 pods.
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
