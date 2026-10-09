@@ -55,6 +55,11 @@ The fixed 40-GiB/53-GiB-cache case remains an explicit Ubuntu2204 compatibility
 control because that cache boundary cannot represent a valid ACL disk.
 Managed Machine networking checks read the actual cluster network profile
 instead of assuming a controller Deployment exists in the workload cluster.
+Chaos retains its five-minute, fewer-than-35-node assertion and unmodified
+taint injection. It records real node snapshots during that window and checks
+ACL image, exact kubelet version, Machine annotation, and provider ID afterward.
+No observed nodes is a failure in the ACL lane. These snapshots do not assert
+workload/network readiness or a live Machine GET after a node has been deleted.
 
 The RP lifecycle runner can consume an unpublished local test commit with
 `ACL_LIFECYCLE_LOCAL_REPOSITORY=<absolute-worktree-path>` and
@@ -62,6 +67,8 @@ The RP lifecycle runner can consume an unpublished local test commit with
 It still checks ancestry and rejects any delta outside `test/`; the original
 controller/CRD and default remote source remain unchanged. The selected
 repository and commit are included in the runtime evidence.
+Local partial clones are consumed through a temporary shared-object checkout;
+keep the source worktree and pinned commit available until the run finishes.
 ACL runner teardown runs after validation failures and waits for both cluster
 and resource-group deletion. Explicit cluster reuse retains the subscription
 in resource identities even when creation handlers are mocked.

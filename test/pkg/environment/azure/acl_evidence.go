@@ -107,6 +107,43 @@ func (env *Environment) expectACLNodeEvidence(name string) {
 		machineID, driftAction, driftReason)
 }
 
+// ExpectObservedACLNodesEvidence checks snapshots from disruptive tests without
+// waiting for readiness or requiring already-deleted Machines to remain live.
+func (env *Environment) ExpectObservedACLNodesEvidence(nodes []*corev1.Node, nodeClass *v1beta1.AKSNodeClass) {
+	GinkgoHelper()
+	if env.TestImageFamily == "" {
+		return
+	}
+	Expect(env.Client.Get(env, client.ObjectKeyFromObject(nodeClass), nodeClass)).To(Succeed())
+	Expect(lo.FromPtr(nodeClass.Spec.ImageFamily)).To(Equal(v1beta1.AzureContainerLinuxImageFamily))
+	version, err := nodeClass.GetKubernetesVersion()
+	Expect(err).ToNot(HaveOccurred())
+	Expect(validateObservedACLNodes(nodes, version)).To(Succeed())
+	for _, node := range nodes {
+		fmt.Fprintf(GinkgoWriter, "ACL lifecycle evidence: source=observed-node node=%s nodeClass=%s image=%s kubelet=%s machineAnnotation=%s providerID=%s networkReadiness=not-asserted\n",
+			node.Name, nodeClass.Name, node.Labels["kubernetes.azure.com/node-image-version"], node.Status.NodeInfo.KubeletVersion,
+			node.Annotations[v1beta1.AnnotationAKSMachineResourceID], node.Spec.ProviderID)
+	}
+}
+
+func validateObservedACLNodes(nodes []*corev1.Node, version string) error {
+	if len(nodes) == 0 {
+		return fmt.Errorf("no ACL node with a reported kubelet version was observed during disruption")
+	}
+	for _, node := range nodes {
+		if err := validateACLNodeIdentity(node); err != nil {
+			return err
+		}
+		if err := validateACLNodeVersion(node, version); err != nil {
+			return err
+		}
+		if node.Spec.ProviderID == "" {
+			return fmt.Errorf("observed ACL node %s lacks a provider ID", node.Name)
+		}
+	}
+	return nil
+}
+
 func nodeClassForACLEvidence(ctx context.Context, kubeClient client.Client, node *corev1.Node) (*v1beta1.AKSNodeClass, error) {
 	var ref *karpv1.NodeClassReference
 	if poolName := node.Labels[karpv1.NodePoolLabelKey]; poolName != "" {

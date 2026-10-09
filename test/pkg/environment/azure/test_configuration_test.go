@@ -95,6 +95,42 @@ func TestACLNodeIdentity(t *testing.T) {
 	}
 }
 
+func TestObservedACLEvidence(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "disrupted-acl-node",
+			Labels: map[string]string{
+				v1beta1.AKSLabelOSSKU:                     v1beta1.OSSKUAzureContainerLinux,
+				"kubernetes.azure.com/node-image-version": "AKSAzureLinux-aclgen2TL-202609.23.0",
+			},
+			Annotations: map[string]string{v1beta1.AnnotationAKSMachineResourceID: "/agentPools/aksmanagedap/machines/test"},
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "azure:///subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/test",
+			Taints:     []corev1.Taint{{Key: "test", Value: "true", Effect: corev1.TaintEffectNoExecute}},
+		},
+		Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.36.4"}},
+	}
+	if err := validateObservedACLNodes([]*corev1.Node{node}, "1.36.4"); err != nil {
+		t.Fatalf("tainted node evidence must not require invented readiness: %v", err)
+	}
+	if err := validateObservedACLNodes(nil, "1.36.4"); err == nil {
+		t.Fatal("a vacuous no-node run cannot provide ACL evidence")
+	}
+	for _, mutate := range []func(*corev1.Node){
+		func(n *corev1.Node) { n.Status.NodeInfo.KubeletVersion = "v1.37.0-rc.0" },
+		func(n *corev1.Node) { n.Labels[v1beta1.AKSLabelOSSKU] = "Ubuntu" },
+		func(n *corev1.Node) { n.Spec.ProviderID = "" },
+		func(n *corev1.Node) { delete(n.Annotations, v1beta1.AnnotationAKSMachineResourceID) },
+	} {
+		bad := node.DeepCopy()
+		mutate(bad)
+		if err := validateObservedACLNodes([]*corev1.Node{node, bad}, "1.36.4"); err == nil {
+			t.Fatal("one valid sample must not conceal an invalid observed node")
+		}
+	}
+}
+
 func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.It("enforces optional ACL identity through the healthy pod count helper", func() {
