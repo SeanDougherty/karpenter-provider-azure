@@ -7,7 +7,7 @@ import (
 )
 
 func TestPackingConstraintsPreserveFixtureCapacity(t *testing.T) {
-	for _, capacity := range []int32{2, 3, 5} {
+	for _, capacity := range []int32{2, 3, 5, 8} {
 		labels := map[string]string{"app": "packing"}
 		constraints := PackingConstraints(labels, capacity)
 		if len(constraints) != 1 {

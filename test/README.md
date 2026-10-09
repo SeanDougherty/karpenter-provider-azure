@@ -31,6 +31,10 @@ Drift and Consolidation's CPU-packing fixtures declare hostname topology explici
 Automatic Safeguards does not inject anti-affinity that changes their node count.
 Consolidation's pod-event case verifies its single-node precondition after all
 pods are healthy; the existing five-second timestamp assertion is unchanged.
+The 50-pod delete-consolidation fixture permits packing up to its eight-CPU
+SKU ceiling instead of inheriting a preference for one pod per node.
+It retains all 50 initial pods, scales to 20, and requires average CPU
+utilization below 0.5 before consolidation and above 0.6 afterward.
 The delete-budget cases wait for a disruption to start before checking its
 concurrency. Budget accounting excludes nodes retained by the testing finalizer
 only after Karpenter removes its termination finalizer, even when the NodeClaim's

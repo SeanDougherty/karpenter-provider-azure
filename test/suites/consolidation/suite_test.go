@@ -529,6 +529,7 @@ var _ = Describe("Consolidation", Ordered, func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{"app": "large-app"},
 					},
+					TopologySpreadConstraints: common.PackingConstraints(map[string]string{"app": "large-app"}, 8),
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
 					},
