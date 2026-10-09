@@ -72,6 +72,9 @@ upgrade or the production 1.38 gate. They require actual API/system/ACL
 kubelets to match the requested versions. The Machine concurrency fixture
 uses explicit two-pod-per-node packing, retaining its original CPU requests,
 node counts, and requirement to scale while the cluster is Upgrading.
+These unpublished lanes require a local test commit containing the upgrade
+fixture revision; the RP rejects older/default source before provisioning,
+so an old suite cannot silently ignore the explicit target.
 
 The RP lifecycle runner can consume an unpublished local test commit with
 `ACL_LIFECYCLE_LOCAL_REPOSITORY=<absolute-worktree-path>` and
