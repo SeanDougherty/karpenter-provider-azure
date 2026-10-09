@@ -40,6 +40,11 @@ const (
 	artifactStreamingEnabledLabelKey = "kubernetes.azure.com/artifactstreaming-enabled"
 
 	artifactStreamingTestTimeout = 5 * time.Minute
+	aclBYOIActiveServicesCheck   = `for service in acr-mirror overlaybd-tcmu overlaybd-snapshotter; do
+systemctl is-active --quiet "$service"
+echo "$service active"
+done
+`
 )
 
 var _ = Describe("ArtifactStreaming", func() {
@@ -149,7 +154,7 @@ sha256sum /oem/aks-sysext-cache/artifact-streaming.raw
 		if expectEnabled {
 			hostCheck += `test "$(readlink -f /etc/extensions/artifact-streaming.raw)" = /oem/aks-sysext-cache/artifact-streaming.raw
 cmp /oem/aks-sysext-cache/artifact-streaming.raw /etc/extensions/artifact-streaming.raw
-systemctl is-active acr-mirror overlaybd-tcmu overlaybd-snapshotter
+` + aclBYOIActiveServicesCheck + `
 test -d /sys/module/target_core_user
 test -d /sys/module/overlay
 echo "ACL BYOI streaming services and OEM payload verified"
@@ -227,6 +232,10 @@ echo "ACL BYOI OEM payload present and inactive"
 
 	if expectEnabled {
 		Expect(actuallyEnabled).To(BeTrue(), fmt.Sprintf("Artifact streaming should be enabled on node %s\nLogs:\n%s", node.Name, logs))
+		if os.Getenv("TEST_ACL_BYOI_IMAGE_ID") != "" {
+			Expect(hasOverlaybdProcess).To(BeTrue(), logs)
+			Expect(hasContainerdConfig).To(BeTrue(), logs)
+		}
 	} else {
 		Expect(actuallyEnabled).To(BeFalse(), fmt.Sprintf("Artifact streaming should be disabled on node %s\nLogs:\n%s", node.Name, logs))
 	}
