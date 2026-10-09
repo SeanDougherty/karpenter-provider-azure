@@ -44,6 +44,36 @@ Without these variables the normal ARM transport is unchanged.
 
 These are test-only inputs and do not require rebuilding the controller or CRD.
 
+### Isolated ACL BYOI controller
+
+The `aclbyoi` Go build tag is an additional, temporary test vehicle. Normal
+controller builds compile no candidate-image selection or request rewriting.
+The tagged controller requires `ACL_TEST_BYOI_IMAGE_ID` (an exact AMD64 ACL
+`MarinerAKSSig/AzureLinuxaclgen2-Dev` version) and `ACL_TEST_BYOI_CLUSTER_ID`
+(one exact cluster in an approved E2E subscription).
+Only non-FIPS, non-Kata ACL with Trusted Launch and non-batched Machine API is
+supported. Other image families keep normal selection.
+
+The test build resolves that exact image and submits the existing RP BYOI
+headers for matching ACL Machine creates. It omits only the outgoing
+`nodeImageVersion`, because the RP otherwise prioritizes it over those headers.
+Responses, node identity, and drift checks are not rewritten. Cluster scope,
+candidate mismatches, conflicting headers, and unsupported inputs fail closed.
+No RP image map or CRD change is required.
+
+Run `go test ./pkg/testonly/aclbyoi` and
+`go test -tags aclbyoi ./pkg/testonly/aclbyoi`, then build with
+`CGO_ENABLED=0 go build -tags aclbyoi -o controller ./cmd/controller`.
+For Microsoft Go 1.27, use `MS_GO_NOSYSTEMCRYPTO=1`, not the retired
+`GOEXPERIMENT=nosystemcrypto`. Package the binary using
+[acl-byoi.Dockerfile](./acl-byoi.Dockerfile).
+
+The owning suite's `TEST_ACL_BYOI_IMAGE_ID` additionally requires exact
+Node/Machine/VM image identity and enabled Secure Boot/vTPM. Streaming probes
+verify the OEM payload from ACL build `1220532`, its active symlink and all
+three services when enabled, and non-activation for default/disabled controls.
+Restore the original controller and Helm reconciliation after the test.
+
 The GPU table includes an explicit managed ACL case. It preserves the existing
 GPU resource/workload assertions and additionally verifies ACL node identity,
 Trusted Launch/Secure Boot/vTPM, and `nvidia-smi -L` on a real

@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -137,6 +138,30 @@ func verifyArtifactStreamingOnNode(node *corev1.Node, expectEnabled bool) {
 	})
 
 	testPod.Spec.HostPID = true
+	if os.Getenv("TEST_ACL_BYOI_IMAGE_ID") != "" {
+		hostCheck := `set -eu
+test -s /oem/aks-sysext-cache/artifact-streaming.raw
+. /etc/os-release
+test "$VARIANT_ID" = azurecontainerlinux
+test "$BUILD_ID" = 1220532
+sha256sum /oem/aks-sysext-cache/artifact-streaming.raw
+`
+		if expectEnabled {
+			hostCheck += `test "$(readlink -f /etc/extensions/artifact-streaming.raw)" = /oem/aks-sysext-cache/artifact-streaming.raw
+cmp /oem/aks-sysext-cache/artifact-streaming.raw /etc/extensions/artifact-streaming.raw
+systemctl is-active acr-mirror overlaybd-tcmu overlaybd-snapshotter
+test -d /sys/module/target_core_user
+test -d /sys/module/overlay
+echo "ACL BYOI streaming services and OEM payload verified"
+`
+		} else {
+			hostCheck += `test ! -e /etc/extensions/artifact-streaming.raw
+echo "ACL BYOI OEM payload present and inactive"
+`
+		}
+		testPod.Spec.Containers[0].Command = []string{"sh", "-c",
+			"chroot /host /bin/bash -c '" + hostCheck + "' && " + testPod.Spec.Containers[0].Command[2]}
+	}
 	testPod.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
 		Privileged: &privileged,
 	}

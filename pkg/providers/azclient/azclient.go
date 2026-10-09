@@ -43,6 +43,7 @@ import (
 	"github.com/Azure/karpenter-provider-azure/pkg/providers/networksecuritygroup"
 	"github.com/Azure/karpenter-provider-azure/pkg/providers/quota"
 	"github.com/Azure/karpenter-provider-azure/pkg/providers/zone"
+	"github.com/Azure/karpenter-provider-azure/pkg/testonly/aclbyoi"
 	"github.com/Azure/karpenter-provider-azure/pkg/utils/batcher"
 	"github.com/Azure/skewer"
 
@@ -130,6 +131,13 @@ func newAKSMachinesClient(subscriptionID string, cred azcore.TokenCredential, op
 		machinesClientOptions = &arm.ClientOptions{}
 	}
 	machinesClientOptions.PerCallPolicies = append(machinesClientOptions.PerCallPolicies, &spotSystemNodePolicy{}, &machinesListExpandPolicy{})
+	byoiPolicy, err := aclbyoi.ClientPolicy(subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	if byoiPolicy != nil {
+		machinesClientOptions.PerCallPolicies = append(machinesClientOptions.PerCallPolicies, byoiPolicy)
+	}
 	return armcontainerservice.NewMachinesClient(subscriptionID, cred, machinesClientOptions)
 }
 

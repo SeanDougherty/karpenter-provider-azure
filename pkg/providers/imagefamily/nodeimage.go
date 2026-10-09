@@ -26,6 +26,7 @@ import (
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	"github.com/Azure/karpenter-provider-azure/pkg/operator/options"
 	types "github.com/Azure/karpenter-provider-azure/pkg/providers/imagefamily/types"
+	"github.com/Azure/karpenter-provider-azure/pkg/testonly/aclbyoi"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
@@ -90,6 +91,17 @@ func (p *provider) List(ctx context.Context, nodeClass *v1beta1.AKSNodeClass) ([
 	}
 
 	supportedImages := getSupportedImages(nodeClass.Spec.ImageFamily, nodeClass.Spec.FIPSMode, kubernetesVersion, useSIG, nodeClass.IsTrustedLaunchEnabled(), nodeClass.IsKataEnabled())
+
+	if imageID, err := aclbyoi.ImageID(ctx, nodeClass); err != nil {
+		return nil, err
+	} else if imageID != "" {
+		for _, image := range supportedImages {
+			if image.ImageDefinition == AzureContainerLinuxGen2ImageDefinition {
+				return []NodeImage{{ID: imageID, Requirements: image.Requirements}}, nil
+			}
+		}
+		return nil, fmt.Errorf("no compatible ACL image requirements for test BYOI")
+	}
 
 	key, err := p.cacheKey(
 		supportedImages,

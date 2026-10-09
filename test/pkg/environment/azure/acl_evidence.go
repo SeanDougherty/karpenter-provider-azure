@@ -17,9 +17,12 @@ package azure
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v7"
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
+	"github.com/Azure/karpenter-provider-azure/pkg/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
@@ -98,6 +101,24 @@ func (env *Environment) expectACLNodeEvidence(name string) {
 	}).Should(Succeed())
 	machineID := node.Annotations[v1beta1.AnnotationAKSMachineResourceID]
 	machine := env.ExpectMachineByID(machineID)
+	if candidate := os.Getenv("TEST_ACL_BYOI_IMAGE_ID"); candidate != "" {
+		expectedVersion, err := utils.GetAKSMachineNodeImageVersionFromSIGImageID(candidate)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(node.Labels["kubernetes.azure.com/node-image-version"]).To(Equal(expectedVersion))
+		Expect(machine.Properties).ToNot(BeNil())
+		Expect(lo.FromPtr(machine.Properties.NodeImageVersion)).To(Equal(expectedVersion))
+		vm := env.GetVM(node.Name)
+		Expect(vm.Properties).ToNot(BeNil())
+		Expect(vm.Properties.StorageProfile).ToNot(BeNil())
+		Expect(vm.Properties.StorageProfile.ImageReference).ToNot(BeNil())
+		Expect(strings.ToLower(utils.ImageReferenceToString(vm.Properties.StorageProfile.ImageReference))).To(Equal(strings.ToLower(candidate)))
+		Expect(vm.Properties.SecurityProfile).ToNot(BeNil())
+		Expect(vm.Properties.SecurityProfile.SecurityType).To(Equal(lo.ToPtr(armcompute.SecurityTypesTrustedLaunch)))
+		Expect(vm.Properties.SecurityProfile.UefiSettings).ToNot(BeNil())
+		Expect(vm.Properties.SecurityProfile.UefiSettings.SecureBootEnabled).To(Equal(lo.ToPtr(true)))
+		Expect(vm.Properties.SecurityProfile.UefiSettings.VTpmEnabled).To(Equal(lo.ToPtr(true)))
+		fmt.Fprintf(GinkgoWriter, "ACL BYOI evidence: node=%s machine=%s exactImage=%s SecureBoot=true vTPM=true\n", node.Name, machineID, candidate)
+	}
 	driftAction, driftReason := "", ""
 	if machine.Properties != nil && machine.Properties.Status != nil {
 		driftAction = string(lo.FromPtr(machine.Properties.Status.DriftAction))
