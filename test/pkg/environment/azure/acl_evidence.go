@@ -16,6 +16,7 @@ limitations under the License.
 package azure
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -65,10 +66,8 @@ func (env *Environment) expectACLNodeEvidence(name string) {
 	}
 	node := &corev1.Node{}
 	Expect(env.Client.Get(env, client.ObjectKey{Name: name}, node)).To(Succeed())
-	pool := &karpv1.NodePool{}
-	Expect(env.Client.Get(env, client.ObjectKey{Name: node.Labels[karpv1.NodePoolLabelKey]}, pool)).To(Succeed())
-	nodeClass := &v1beta1.AKSNodeClass{}
-	Expect(env.Client.Get(env, client.ObjectKey{Name: pool.Spec.Template.Spec.NodeClassRef.Name}, nodeClass)).To(Succeed())
+	nodeClass, err := nodeClassForACLEvidence(env.Context, env.Client, node)
+	Expect(err).ToNot(HaveOccurred())
 	// Explicit other-OS test cases remain compatibility controls.
 	if lo.FromPtr(nodeClass.Spec.ImageFamily) != v1beta1.AzureContainerLinuxImageFamily {
 		return
@@ -104,8 +103,47 @@ func (env *Environment) expectACLNodeEvidence(name string) {
 		driftReason = lo.FromPtr(machine.Properties.Status.DriftReason)
 	}
 	fmt.Fprintf(GinkgoWriter, "ACL lifecycle evidence: node=%s pool=%s nodeClass=%s image=%s machine=%s machineDriftAction=%q machineDriftReason=%q CNS/Cilium=Ready\n",
-		node.Name, pool.Name, nodeClass.Name, node.Labels["kubernetes.azure.com/node-image-version"],
+		node.Name, node.Labels[karpv1.NodePoolLabelKey], nodeClass.Name, node.Labels["kubernetes.azure.com/node-image-version"],
 		machineID, driftAction, driftReason)
+}
+
+func nodeClassForACLEvidence(ctx context.Context, kubeClient client.Client, node *corev1.Node) (*v1beta1.AKSNodeClass, error) {
+	var ref *karpv1.NodeClassReference
+	if poolName := node.Labels[karpv1.NodePoolLabelKey]; poolName != "" {
+		pool := &karpv1.NodePool{}
+		if err := kubeClient.Get(ctx, client.ObjectKey{Name: poolName}, pool); err != nil {
+			return nil, err
+		}
+		ref = pool.Spec.Template.Spec.NodeClassRef
+	} else {
+		// Standalone NodeClaims legitimately have no NodePool. Follow the
+		// real Node owner and verify its identity instead of skipping proof.
+		for _, owner := range node.OwnerReferences {
+			if owner.APIVersion != "karpenter.sh/v1" || owner.Kind != "NodeClaim" {
+				continue
+			}
+			claim := &karpv1.NodeClaim{}
+			if err := kubeClient.Get(ctx, client.ObjectKey{Name: owner.Name}, claim); err != nil {
+				return nil, err
+			}
+			if owner.UID == "" || claim.UID != owner.UID || claim.Status.NodeName != node.Name ||
+				node.Spec.ProviderID == "" || claim.Status.ProviderID != node.Spec.ProviderID {
+				return nil, fmt.Errorf("node %s does not match its NodeClaim owner %s", node.Name, owner.Name)
+			}
+			if ref != nil {
+				return nil, fmt.Errorf("node %s has multiple NodeClaim owners", node.Name)
+			}
+			ref = claim.Spec.NodeClassRef
+		}
+	}
+	if ref == nil || ref.Group != v1beta1.Group || ref.Kind != v1beta1.AKSNodeClassKind || ref.Name == "" {
+		return nil, fmt.Errorf("node %s lacks an unambiguous AKSNodeClass reference", node.Name)
+	}
+	nodeClass := &v1beta1.AKSNodeClass{}
+	if err := kubeClient.Get(ctx, client.ObjectKey{Name: ref.Name}, nodeClass); err != nil {
+		return nil, err
+	}
+	return nodeClass, nil
 }
 
 func validateACLNodeIdentity(node *corev1.Node) error {

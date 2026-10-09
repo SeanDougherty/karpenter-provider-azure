@@ -75,7 +75,20 @@ var _ = Describe("Machine Tests", func() {
 		// Check if networking settings are compatible with this test
 		// NETWORK_PLUGIN_MODE must be overlay, but NETWORK_PLUGIN and NETWORK_DATAPLANE
 		// can be unset (using defaults) or set to expected values (but not set to different values)
-		settings := env.ExpectSettings()
+		var settings []corev1.EnvVar
+		if env.InClusterController {
+			settings = env.ExpectSettings()
+		} else {
+			cluster := env.ExpectGetManagedCluster()
+			Expect(cluster.Properties).ToNot(BeNil())
+			Expect(cluster.Properties.NetworkProfile).ToNot(BeNil())
+			network := cluster.Properties.NetworkProfile
+			settings = []corev1.EnvVar{
+				{Name: "NETWORK_PLUGIN", Value: string(lo.FromPtr(network.NetworkPlugin))},
+				{Name: "NETWORK_PLUGIN_MODE", Value: string(lo.FromPtr(network.NetworkPluginMode))},
+				{Name: "NETWORK_DATAPLANE", Value: string(lo.FromPtr(network.NetworkDataplane))},
+			}
+		}
 
 		// Helper function to check if env var is unset or set to expected value
 		checkEnvVar := func(envName, expectedValue string) bool {

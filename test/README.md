@@ -44,6 +44,23 @@ Without these variables the normal ARM transport is unchanged.
 
 These are test-only inputs and do not require rebuilding the controller or CRD.
 
+Stage 4 lifecycle fixtures also support standalone NodeClaims: ACL evidence
+follows the Node's real NodeClaim owner when there is no NodePool, requiring
+matching UID, node name, and provider ID before resolving its AKSNodeClass.
+The existing OS, image, version, Machine, and network assertions still apply.
+ACL ephemeral-disk fixtures use 64 GiB rather than the generic 50-GiB test disk.
+The fixed 40-GiB/53-GiB-cache case remains an explicit Ubuntu2204 compatibility
+control because that cache boundary cannot represent a valid ACL disk.
+Managed Machine networking checks read the actual cluster network profile
+instead of assuming a controller Deployment exists in the workload cluster.
+
+The RP lifecycle runner can consume an unpublished local test commit with
+`ACL_LIFECYCLE_LOCAL_REPOSITORY=<absolute-worktree-path>` and
+`ACL_LIFECYCLE_TEST_REVISION=<full-commit-SHA>`. Both inputs are required.
+It still checks ancestry and rejects any delta outside `test/`; the original
+controller/CRD and default remote source remain unchanged. The selected
+repository and commit are included in the runtime evidence.
+
 The GPU table includes an explicit managed ACL case. It preserves the existing
 GPU resource/workload assertions and additionally verifies ACL node identity,
 Trusted Launch/Secure Boot/vTPM, and `nvidia-smi -L` on a real
