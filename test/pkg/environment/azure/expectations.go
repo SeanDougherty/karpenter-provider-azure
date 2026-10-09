@@ -18,10 +18,12 @@ package azure
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/blang/semver/v4"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
@@ -101,6 +103,48 @@ func (env *Environment) ExpectSuccessfulGetOfAvailableKubernetesVersionUpgradesF
 	upgradeProfile, err := env.managedClusterClient.GetUpgradeProfile(env.Context, env.ClusterResourceGroup, env.ClusterName, nil)
 	Expect(err).ToNot(HaveOccurred())
 	return upgradeProfile.Properties.ControlPlaneProfile.Upgrades
+}
+
+func (env *Environment) ExpectKubernetesUpgradeVersion() string {
+	GinkgoHelper()
+	upgrades := env.ExpectSuccessfulGetOfAvailableKubernetesVersionUpgradesForManagedCluster()
+	cluster := env.ExpectGetManagedCluster()
+	Expect(cluster.Properties).ToNot(BeNil())
+	version, err := selectKubernetesUpgradeVersion(upgrades,
+		lo.FromPtr(cluster.Properties.CurrentKubernetesVersion), os.Getenv("TEST_AKS_KUBERNETES_UPGRADE_TARGET"))
+	Expect(err).ToNot(HaveOccurred())
+	return version
+}
+
+func selectKubernetesUpgradeVersion(upgrades []*containerservice.ManagedClusterPoolUpgradeProfileUpgradesItem, current, requested string) (string, error) {
+	currentVersion, err := semver.Parse(current)
+	if err != nil {
+		return "", fmt.Errorf("invalid current Kubernetes version %q: %w", current, err)
+	}
+	var selected string
+	var selectedVersion semver.Version
+	for _, upgrade := range upgrades {
+		if upgrade == nil || upgrade.KubernetesVersion == nil {
+			return "", fmt.Errorf("upgrade profile contains an entry without a Kubernetes version")
+		}
+		version, err := semver.Parse(*upgrade.KubernetesVersion)
+		if err != nil {
+			return "", fmt.Errorf("invalid advertised Kubernetes upgrade %q: %w", *upgrade.KubernetesVersion, err)
+		}
+		if requested != "" && *upgrade.KubernetesVersion != requested {
+			continue
+		}
+		if selected == "" || version.GT(selectedVersion) {
+			selected, selectedVersion = *upgrade.KubernetesVersion, version
+		}
+	}
+	if selected == "" {
+		return "", fmt.Errorf("no advertised Kubernetes upgrade matches target %q", requested)
+	}
+	if !selectedVersion.GT(currentVersion) {
+		return "", fmt.Errorf("Kubernetes target %q must be newer than current version %q", selected, current)
+	}
+	return selected, nil
 }
 
 func (env *Environment) ExpectSuccessfulUpgradeOfManagedCluster(kubernetesUpgradeVersion string) *containerservice.ManagedCluster {

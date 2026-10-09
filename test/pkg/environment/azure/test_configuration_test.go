@@ -131,6 +131,35 @@ func TestObservedACLEvidence(t *testing.T) {
 	}
 }
 
+func TestKubernetesUpgradeSelection(t *testing.T) {
+	upgrades := []*containerservice.ManagedClusterPoolUpgradeProfileUpgradesItem{
+		{KubernetesVersion: lo.ToPtr("1.36.4")},
+		{KubernetesVersion: lo.ToPtr("1.37.0")},
+	}
+	for _, tc := range []struct {
+		current, requested, want string
+	}{
+		{"1.36.3", "", "1.37.0"},
+		{"1.36.3", "1.36.4", "1.36.4"},
+		{"1.36.4", "1.36.4", ""},
+		{"1.37.0", "1.36.4", ""},
+		{"1.36.3", "1.38.0", ""},
+		{"invalid", "1.36.4", ""},
+	} {
+		got, err := selectKubernetesUpgradeVersion(upgrades, tc.current, tc.requested)
+		if got != tc.want || (err != nil) != (tc.want == "") {
+			t.Errorf("current=%q target=%q: got %q, %v; want %q", tc.current, tc.requested, got, err, tc.want)
+		}
+	}
+	for _, unavailable := range [][]*containerservice.ManagedClusterPoolUpgradeProfileUpgradesItem{
+		nil, {nil}, {{KubernetesVersion: lo.ToPtr("invalid")}},
+	} {
+		if _, err := selectKubernetesUpgradeVersion(unavailable, "1.36.3", "1.36.4"); err == nil {
+			t.Fatal("an empty or invalid upgrade profile must not select a target")
+		}
+	}
+}
+
 func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.It("enforces optional ACL identity through the healthy pod count helper", func() {

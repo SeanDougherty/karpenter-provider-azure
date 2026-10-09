@@ -61,6 +61,18 @@ ACL image, exact kubelet version, Machine annotation, and provider ID afterward.
 No observed nodes is a failure in the ACL lane. These snapshots do not assert
 workload/network readiness or a live Machine GET after a node has been deleted.
 
+Upgrade suites accept `TEST_AKS_KUBERNETES_UPGRADE_TARGET` only when that exact
+version is advertised for the cluster and newer than its current version.
+An omitted target retains the highest-advertised-version behavior. Explicit
+ACL selection also applies to KubernetesUpgrade; its existing drift,
+replacement, and actual kubelet-version assertions remain in place.
+The RP's separately named `Machine_1363To1364` and
+`KubernetesUpgrade_1363To1364` lanes qualify a patch transition, not a minor
+upgrade or the production 1.38 gate. They require actual API/system/ACL
+kubelets to match the requested versions. The Machine concurrency fixture
+uses explicit two-pod-per-node packing, retaining its original CPU requests,
+node counts, and requirement to scale while the cluster is Upgrading.
+
 The RP lifecycle runner can consume an unpublished local test commit with
 `ACL_LIFECYCLE_LOCAL_REPOSITORY=<absolute-worktree-path>` and
 `ACL_LIFECYCLE_TEST_REVISION=<full-commit-SHA>`. Both inputs are required.
