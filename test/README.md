@@ -27,8 +27,10 @@ NodeClass's requested version exactly. An RC kubelet advertised as a final
 release is a lifecycle precondition failure, not a reason to suppress the
 provider's version-drift detection.
 
-Drift's CPU-packing budget fixtures declare hostname topology explicitly so
+Drift and Consolidation's CPU-packing fixtures declare hostname topology explicitly so
 Automatic Safeguards does not inject anti-affinity that changes their node count.
+Consolidation's pod-event case verifies its single-node precondition after all
+pods are healthy; the existing five-second timestamp assertion is unchanged.
 The delete-budget cases wait for a disruption to start before checking its
 concurrency. Budget accounting excludes nodes retained by the testing finalizer
 only after Karpenter removes its termination finalizer, even when the NodeClaim's
@@ -60,6 +62,9 @@ The RP lifecycle runner can consume an unpublished local test commit with
 It still checks ancestry and rejects any delta outside `test/`; the original
 controller/CRD and default remote source remain unchanged. The selected
 repository and commit are included in the runtime evidence.
+ACL runner teardown runs after validation failures and waits for both cluster
+and resource-group deletion. Explicit cluster reuse retains the subscription
+in resource identities even when creation handlers are mocked.
 
 The GPU table includes an explicit managed ACL case. It preserves the existing
 GPU resource/workload assertions and additionally verifies ACL node identity,

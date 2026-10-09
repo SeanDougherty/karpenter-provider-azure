@@ -81,6 +81,7 @@ var _ = Describe("Consolidation", Ordered, func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{"app": "regular-app"},
 					},
+					TopologySpreadConstraints: common.PackingConstraints(map[string]string{"app": "regular-app"}, numPods),
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
 					},
@@ -94,9 +95,9 @@ var _ = Describe("Consolidation", Ordered, func() {
 			}
 			env.ExpectCreated(nodeClass, nodePool, dep)
 
+			env.EventuallyExpectHealthyPodCount(selector, int(numPods))
 			nodeClaims := env.EventuallyExpectRegisteredNodeClaimCount("==", 1)
 			env.EventuallyExpectCreatedNodeCount("==", 1)
-			env.EventuallyExpectHealthyPodCount(selector, int(numPods))
 
 			nodeClaim := env.ExpectExists(nodeClaims[0]).(*karpv1.NodeClaim)
 			lastPodEventTime := nodeClaim.Status.LastPodEventTime
@@ -264,6 +265,7 @@ var _ = Describe("Consolidation", Ordered, func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{"app": "large-app"},
 					},
+					TopologySpreadConstraints: common.PackingConstraints(map[string]string{"app": "large-app"}, 3),
 					// with 8 cpus, each node should fit no more than 3 pods.
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{

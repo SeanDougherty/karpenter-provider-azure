@@ -18,19 +18,12 @@ package drift_test
 import (
 	"testing"
 
+	"github.com/Azure/karpenter-provider-azure/test/pkg/environment/common"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func budgetPackingConstraints() []corev1.TopologySpreadConstraint {
-	return []corev1.TopologySpreadConstraint{{
-		// As in the upstream budget fixture, allow three pods per hostname.
-		// System-pool domains have no matching pods and must not force one per node.
-		MaxSkew:           3,
-		TopologyKey:       corev1.LabelHostname,
-		WhenUnsatisfiable: corev1.DoNotSchedule,
-		LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"app": "large-app"}},
-	}}
+	return common.PackingConstraints(map[string]string{"app": "large-app"}, 3)
 }
 
 func TestBudgetPackingConstraints(t *testing.T) {
