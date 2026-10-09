@@ -46,6 +46,10 @@ Standalone runners may supply `TEST_AKS_PROXY_URL` (a loopback HTTPS origin) and
 `TEST_AKS_PROXY_CA` (its CA file). Only ContainerService API calls use this
 bridge; Compute and Network requests continue to real ARM. The trusted local
 runner owns ingress authentication, and the bridge strips ARM bearer tokens.
+The bridge permits only the scenario cluster plus read-only polling of exact
+operation/result URLs returned by its successful responses in the same
+subscription and region. Unrelated operations and writes to those URLs
+remain blocked.
 Without these variables the normal ARM transport is unchanged.
 
 These are test-only inputs and do not require rebuilding the controller or CRD.
