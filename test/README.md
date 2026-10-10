@@ -57,6 +57,8 @@ These are test-only inputs and do not require rebuilding the controller or CRD.
 Stage 4 lifecycle fixtures also support standalone NodeClaims: ACL evidence
 follows the Node's real NodeClaim owner when there is no NodePool, requiring
 matching UID, node name, and provider ID before resolving its AKSNodeClass.
+The evidence helper allows a bounded wait for independently observed Node
+and NodeClaim status updates; it never relaxes those identity comparisons.
 The existing OS, image, version, Machine, and network assertions still apply.
 ACL ephemeral-disk fixtures use 64 GiB rather than the generic 50-GiB test disk.
 The cache-only control uses `Standard_D4pls_v5`: 8 GiB memory fits the

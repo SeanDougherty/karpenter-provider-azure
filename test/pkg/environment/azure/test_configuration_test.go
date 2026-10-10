@@ -16,6 +16,7 @@ limitations under the License.
 package azure
 
 import (
+	"context"
 	"encoding/pem"
 	"io"
 	"net/http"
@@ -40,7 +41,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -187,7 +190,20 @@ func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 		node.Status.NodeInfo.KubeletVersion = "v1.36.4"
 		nodeClass.Status.KubernetesVersion = lo.ToPtr("1.36.4")
 		nodeClass.StatusConditions().SetTrue(v1beta1.ConditionTypeKubernetesVersionReady)
-		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, node, pool, nodeClass).Build()
+		delayedClaimStatus, claimReads := false, 0
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, node, pool, nodeClass).
+			WithInterceptorFuncs(interceptor.Funcs{Get: func(ctx context.Context, underlying crclient.WithWatch, key crclient.ObjectKey, object crclient.Object, opts ...crclient.GetOption) error {
+				if err := underlying.Get(ctx, key, object, opts...); err != nil {
+					return err
+				}
+				if claim, ok := object.(*karpv1.NodeClaim); ok && delayedClaimStatus {
+					claimReads++
+					if claimReads == 1 {
+						claim.Status.NodeName = ""
+					}
+				}
+				return nil
+			}}).Build()
 		networkPods := []runtime.Object{}
 		for _, app := range []string{"azure-cns", "cilium"} {
 			networkPods = append(networkPods, &corev1.Pod{
@@ -229,6 +245,25 @@ func TestHealthyPodCountRequiresACLEvidence(t *testing.T) {
 		}
 		if machineCalls != 1 {
 			t.Fatal("machine drift state was not captured")
+		}
+		node.Spec.ProviderID = "azure:///subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/test"
+		delete(node.Labels, karpv1.NodePoolLabelKey)
+		node.OwnerReferences = []metav1.OwnerReference{{APIVersion: "karpenter.sh/v1", Kind: "NodeClaim", Name: "claim", UID: "claim-uid"}}
+		claim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "claim", UID: "claim-uid"},
+			Spec:       karpv1.NodeClaimSpec{NodeClassRef: pool.Spec.Template.Spec.NodeClassRef},
+			Status:     karpv1.NodeClaimStatus{NodeName: node.Name, ProviderID: node.Spec.ProviderID},
+		}
+		if err := client.Create(t.Context(), claim); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Update(t.Context(), node); err != nil {
+			t.Fatal(err)
+		}
+		delayedClaimStatus = true
+		env.EventuallyExpectHealthyPodCount(selector, 1)
+		if claimReads < 2 {
+			t.Fatal("ACL evidence must wait for owner status to converge without weakening identity checks")
 		}
 		node.Labels[v1beta1.AKSLabelOSSKU] = "Ubuntu"
 		if err := client.Update(t.Context(), node); err != nil {

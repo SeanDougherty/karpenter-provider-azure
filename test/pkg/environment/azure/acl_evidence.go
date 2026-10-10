@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	. "github.com/onsi/ginkgo/v2"
@@ -65,9 +66,13 @@ func (env *Environment) expectACLNodeEvidence(name string) {
 		return
 	}
 	node := &corev1.Node{}
-	Expect(env.Client.Get(env, client.ObjectKey{Name: name}, node)).To(Succeed())
-	nodeClass, err := nodeClassForACLEvidence(env.Context, env.Client, node)
-	Expect(err).ToNot(HaveOccurred())
+	var nodeClass *v1beta1.AKSNodeClass
+	Eventually(func(g Gomega) {
+		g.Expect(env.Client.Get(env, client.ObjectKey{Name: name}, node)).To(Succeed())
+		var err error
+		nodeClass, err = nodeClassForACLEvidence(env.Context, env.Client, node)
+		g.Expect(err).ToNot(HaveOccurred())
+	}).WithTimeout(30 * time.Second).Should(Succeed())
 	// Explicit other-OS test cases remain compatibility controls.
 	if lo.FromPtr(nodeClass.Spec.ImageFamily) != v1beta1.AzureContainerLinuxImageFamily {
 		return
@@ -165,7 +170,8 @@ func nodeClassForACLEvidence(ctx context.Context, kubeClient client.Client, node
 			}
 			if owner.UID == "" || claim.UID != owner.UID || claim.Status.NodeName != node.Name ||
 				node.Spec.ProviderID == "" || claim.Status.ProviderID != node.Spec.ProviderID {
-				return nil, fmt.Errorf("node %s does not match its NodeClaim owner %s", node.Name, owner.Name)
+				return nil, fmt.Errorf("node %s does not match its NodeClaim owner %s: ownerUID=%s claimUID=%s claimNode=%q nodeProviderID=%q claimProviderID=%q",
+					node.Name, owner.Name, owner.UID, claim.UID, claim.Status.NodeName, node.Spec.ProviderID, claim.Status.ProviderID)
 			}
 			if ref != nil {
 				return nil, fmt.Errorf("node %s has multiple NodeClaim owners", node.Name)
