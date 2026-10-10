@@ -53,6 +53,7 @@ var _ = Describe("Options", func() {
 		"CLUSTER_NAME",
 		"CLUSTER_ENDPOINT",
 		"VM_MEMORY_OVERHEAD_PERCENT",
+		"PRICING_CLOUD",
 		"ENABLE_NODE_HARDENING",
 		"CLUSTER_ID",
 		"KUBELET_BOOTSTRAP_TOKEN",
@@ -1061,5 +1062,32 @@ func TestShouldUseNodeHardening(t *testing.T) {
 			}
 			g.Expect(opts.ShouldUseNodeHardening()).To(Equal(test.want))
 		})
+	}
+}
+
+func TestPricingCloudOptions(t *testing.T) {
+	for _, value := range []string{"", "AzurePublicCloud", "AzureChinaCloud", "https://untrusted.example"} {
+		t.Run(value, func(t *testing.T) {
+			opts := test.Options()
+			opts.PricingCloud = value
+			err := opts.Validate()
+			valid := value == "" || value == "AzurePublicCloud"
+			if (err == nil) != valid {
+				t.Fatalf("pricing cloud %q: %v", value, err)
+			}
+		})
+	}
+	t.Setenv("PRICING_CLOUD", "AzurePublicCloud")
+	fs := &coreoptions.FlagSet{FlagSet: flag.NewFlagSet("pricing", flag.ContinueOnError)}
+	opts := &options.Options{}
+	opts.AddFlags(fs)
+	if opts.PricingCloud != "AzurePublicCloud" {
+		t.Fatal("pricing-cloud environment input was lost")
+	}
+	if err := fs.Parse([]string{"--pricing-cloud="}); err != nil {
+		t.Fatal(err)
+	}
+	if opts.PricingCloud != "" {
+		t.Fatal("explicit CLI choice must override the environment")
 	}
 }

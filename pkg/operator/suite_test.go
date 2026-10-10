@@ -18,6 +18,7 @@ package operator
 
 import (
 	"context"
+	"maps"
 	"testing"
 
 	"github.com/awslabs/operatorpkg/object"
@@ -31,8 +32,10 @@ import (
 	coretest "sigs.k8s.io/karpenter/pkg/test"
 	. "sigs.k8s.io/karpenter/pkg/utils/testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/karpenter-provider-azure/pkg/apis"
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
+	"github.com/Azure/karpenter-provider-azure/pkg/auth"
 )
 
 var (
@@ -45,6 +48,27 @@ func TestOperator(t *testing.T) {
 
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Operator")
+}
+
+func TestPricingEnvironmentIsolation(t *testing.T) {
+	config := cloud.AzurePublic
+	config.Services = maps.Clone(config.Services)
+	resourceManager := config.Services[cloud.ResourceManager]
+	resourceManager.Endpoint = "https://private-arm.example/"
+	config.Services[cloud.ResourceManager] = resourceManager
+	environment := &auth.Environment{Cloud: config}
+
+	if pricingEnvironment(environment, "") != environment || auth.IsPublic(environment.Cloud) {
+		t.Fatal("default pricing must retain the resource cloud")
+	}
+	pricing := pricingEnvironment(environment, "AzurePublicCloud")
+	if pricing == environment || !auth.IsPublic(pricing.Cloud) {
+		t.Fatal("explicit public pricing must use an independent environment")
+	}
+	if environment.Cloud.Services[cloud.ResourceManager].Endpoint != resourceManager.Endpoint ||
+		auth.IsPublic(environment.Cloud) {
+		t.Fatal("pricing override must not reroute resource operations or mutate their environment")
+	}
 }
 
 var _ = BeforeSuite(func() {

@@ -49,8 +49,16 @@ func (o *Options) Validate() error {
 		o.validateDiskEncryptionSetID(),
 		o.validateClusterDNSIP(),
 		o.validateComputeRecommendationMode(),
+		o.validatePricingCloud(),
 		validate.Struct(o),
 	)
+}
+
+func (o *Options) validatePricingCloud() error {
+	if o.PricingCloud != "" && o.PricingCloud != "AzurePublicCloud" {
+		return fmt.Errorf("pricing-cloud %q is invalid; use AzurePublicCloud or leave it empty for the resource cloud default", o.PricingCloud)
+	}
+	return nil
 }
 
 func (o *Options) validateClusterDNSIP() error {

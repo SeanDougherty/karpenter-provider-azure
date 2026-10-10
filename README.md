@@ -83,6 +83,16 @@ Node capacity. Other image families retain their existing estimates.
 
 ## Known limitations
 
+When Azure Public resources are accessed through a custom ARM endpoint,
+`--pricing-cloud=AzurePublicCloud` (environment `PRICING_CLOUD`, Helm
+`settings.pricingCloud`) explicitly enables the real Azure Public retail
+pricing API. It changes only the pricing provider's cloud selection, not
+resource endpoints, credentials, or authorization. The default is empty
+and preserves cloud-based pricing detection. Do not use this override to
+represent prices in a different cloud.
+Pricing reads honor cancellation, bound each page request, close response
+bodies, and reject redirects or pagination outside the retail API.
+
 The following AKS features are not supported:
 * Windows nodes.
 * Kubenet and Calico.

@@ -193,6 +193,8 @@ settings:
   clusterEndpoint: ""
   # -- The VM memory overhead as a percent that will be subtracted from the total memory for all instance types
   vmMemoryOverheadPercent: 0.075
+  # -- Optional pricing-only cloud override (AzurePublicCloud). Empty uses the resource cloud default; Azure resource endpoints and authentication are unchanged.
+  pricingCloud: ""
   # -- Additional tags to apply to Azure resources. These tags are merged with AKSNodeClass tags, with AKSNodeClass tags taking precedence on collisions.
   tags: {}
   # -- How the Karpenter scheduler should treat preferences. Preferences include preferredDuringSchedulingIgnoreDuringExecution

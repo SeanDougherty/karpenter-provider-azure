@@ -115,6 +115,15 @@ type Operator struct {
 	Cloud cloud.Configuration
 }
 
+func pricingEnvironment(environment *auth.Environment, pricingCloud string) *auth.Environment {
+	if pricingCloud != "AzurePublicCloud" {
+		return environment
+	}
+	pricingEnvironment := *environment
+	pricingEnvironment.Cloud = cloud.AzurePublic
+	return &pricingEnvironment
+}
+
 func kubeDNSIP(ctx context.Context, kubernetesInterface kubernetes.Interface) (net.IP, error) {
 	if kubernetesInterface == nil {
 		return nil, fmt.Errorf("no K8s client provided")
@@ -181,10 +190,11 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 	}
 
 	unavailableOfferingsCache := azurecache.NewUnavailableOfferings()
+	pricingEnv := pricingEnvironment(env, options.FromContext(ctx).PricingCloud)
 	pricingProvider := pricing.NewProvider(
 		ctx,
-		env,
-		pricing.NewAPI(env.Cloud),
+		pricingEnv,
+		pricing.NewAPI(pricingEnv.Cloud),
 		azConfig.Location,
 		operator.Elected(),
 	)

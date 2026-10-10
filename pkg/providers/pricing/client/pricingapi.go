@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/karpenter-provider-azure/pkg/auth"
@@ -39,14 +40,20 @@ type PricingAPI interface {
 }
 
 type pricingAPI struct {
-	cloud cloud.Configuration
+	cloud      cloud.Configuration
+	httpClient *http.Client
 }
 
 func New(cloud cloud.Configuration) PricingAPI {
-	return &pricingAPI{cloud: cloud}
+	return &pricingAPI{
+		cloud: cloud,
+		httpClient: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
+	}
 }
 
-func (papi *pricingAPI) GetProductsPricePages(_ context.Context, filters []*Filter, pageHandler func(output *ProductsPricePage)) error {
+func (papi *pricingAPI) GetProductsPricePages(ctx context.Context, filters []*Filter, pageHandler func(output *ProductsPricePage)) error {
 	nextURL := pricingURL
 
 	if !auth.IsPublic(papi.cloud) {
@@ -65,29 +72,50 @@ func (papi *pricingAPI) GetProductsPricePages(_ context.Context, filters []*Filt
 		nextURL += fmt.Sprintf("&$filter=%s", filterParamsEscaped)
 	}
 
+	visited := map[string]bool{}
 	for nextURL != "" {
-		res, err := http.Get(nextURL)
+		if visited[nextURL] {
+			return fmt.Errorf("pricing API returned a repeated page URL")
+		}
+		visited[nextURL] = true
+		page, err := papi.getPage(ctx, nextURL)
 		if err != nil {
 			return err
 		}
-
-		if res.StatusCode != 200 {
-			return fmt.Errorf("got a non-200 status code: %d", res.StatusCode)
-		}
-
-		resBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			return err
-		}
-
-		page := ProductsPricePage{}
-		err = json.Unmarshal(resBody, &page)
-		if err != nil {
-			return err
-		}
-
 		pageHandler(&page)
 		nextURL = page.NextPageLink
 	}
 	return nil
+}
+
+func (papi *pricingAPI) getPage(ctx context.Context, pageURL string) (ProductsPricePage, error) {
+	var page ProductsPricePage
+	u, err := url.Parse(pageURL)
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), "prices.azure.com") ||
+		(u.Port() != "" && u.Port() != "443") ||
+		u.Path != "/api/retail/prices" || u.User != nil || u.Fragment != "" {
+		return page, fmt.Errorf("pricing API returned an invalid page URL")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return page, fmt.Errorf("creating pricing request: %w", err)
+	}
+	response, err := papi.httpClient.Do(request)
+	if err != nil {
+		return page, fmt.Errorf("requesting pricing page: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return page, fmt.Errorf("pricing API returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return page, fmt.Errorf("reading pricing page: %w", err)
+	}
+	if err := json.Unmarshal(body, &page); err != nil {
+		return page, fmt.Errorf("decoding pricing page: %w", err)
+	}
+	return page, nil
 }

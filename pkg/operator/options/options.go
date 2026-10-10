@@ -66,6 +66,7 @@ type Options struct {
 	ClusterName             string  `json:"clusterName,omitempty"`
 	ClusterEndpoint         string  `json:"clusterEndpoint,omitempty"` // => APIServerName in bootstrap, except needs to be w/o https/port
 	VMMemoryOverheadPercent float64 `json:"vmMemoryOverheadPercent,omitempty"`
+	PricingCloud            string  `json:"pricingCloud,omitempty"`
 	// EnableNodeHardening records the temporary ManagedCluster preview flag, but does not by itself
 	// mean node hardening is active. The bootstrappingclient mode intentionally ignores this flag
 	// because its bootstrap backend does not apply the matching kubelet configuration. Consumers
@@ -118,6 +119,7 @@ func (o *Options) AddFlags(fs *coreoptions.FlagSet) {
 	fs.StringVar(&o.ClusterName, "cluster-name", env.WithDefaultString("CLUSTER_NAME", ""), "[REQUIRED] The kubernetes cluster name for resource tags.")
 	fs.StringVar(&o.ClusterEndpoint, "cluster-endpoint", env.WithDefaultString("CLUSTER_ENDPOINT", ""), "[REQUIRED] The external kubernetes cluster endpoint for new nodes to connect with.")
 	fs.Float64Var(&o.VMMemoryOverheadPercent, "vm-memory-overhead-percent", utils.WithDefaultFloat64("VM_MEMORY_OVERHEAD_PERCENT", 0.075), "The VM memory overhead as a percent that will be subtracted from the total memory for all instance types.")
+	fs.StringVar(&o.PricingCloud, "pricing-cloud", env.WithDefaultString("PRICING_CLOUD", ""), "Optional pricing-only cloud override: AzurePublicCloud. Does not change Azure resource endpoints or authentication.")
 	fs.BoolVar(&o.EnableNodeHardening, "enable-node-hardening", env.WithDefaultBool("ENABLE_NODE_HARDENING", false), "Requests AKS node hardening reservations and eviction settings where supported. This option is ignored in bootstrappingclient mode.")
 	fs.StringVar(&o.KubeletClientTLSBootstrapToken, "kubelet-bootstrap-token", env.WithDefaultString("KUBELET_BOOTSTRAP_TOKEN", ""), "[REQUIRED] The bootstrap token for new nodes to join the cluster.")
 	fs.StringVar(&o.LinuxAdminUsername, "linux-admin-username", env.WithDefaultString("LINUX_ADMIN_USERNAME", "azureuser"), "The admin username for Linux VMs.")
