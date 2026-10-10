@@ -24,21 +24,48 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/test"
+	"strconv"
+	"testing"
 )
+
+func ephemeralFixtureDiskSize(nodeClass *v1beta1.AKSNodeClass) int32 {
+	if lo.FromPtr(nodeClass.Spec.ImageFamily) == v1beta1.AzureContainerLinuxImageFamily {
+		return 64
+	}
+	return 50
+}
+
+func TestEphemeralFixtureDiskSize(t *testing.T) {
+	for _, tc := range []struct {
+		family string
+		size   int32
+	}{
+		{v1beta1.AzureContainerLinuxImageFamily, 64},
+		{v1beta1.Ubuntu2204ImageFamily, 50},
+		{v1beta1.AzureLinuxImageFamily, 50},
+	} {
+		nc := &v1beta1.AKSNodeClass{}
+		nc.Spec.ImageFamily = &tc.family
+		if got := ephemeralFixtureDiskSize(nc); got != tc.size {
+			t.Fatalf("%s: got disk size %d, want %d", tc.family, got, tc.size)
+		}
+	}
+}
 
 var _ = Describe("Ephemeral OS Disk", func() {
 	It("should use a node with an ephemeral os disk", func() {
+		diskSize := ephemeralFixtureDiskSize(nodeClass)
 		test.ReplaceRequirements(nodePool, karpv1.NodeSelectorRequirementWithMinValues{
 			Key:      v1beta1.LabelSKUStorageEphemeralOSMaxSize,
 			Operator: corev1.NodeSelectorOpGt,
 			// NOTE: this is the size of our nodeclass OSDiskSizeGB.
 			// If the size of the ephemeral disk requested is lower than AKSNodeClass OSDiskGB
 			// we fallback to managed disks, honoring OSDiskSizeGB
-			Values: []string{"50"},
+			Values: []string{strconv.Itoa(int(diskSize))},
 		})
 
 		deployment := test.Deployment(test.DeploymentOptions{Replicas: 1})
-		nodeClass.Spec.OSDiskSizeGB = lo.ToPtr[int32](50)
+		nodeClass.Spec.OSDiskSizeGB = &diskSize
 		env.ExpectCreated(nodeClass, nodePool, deployment)
 		pods := env.EventuallyExpectHealthyDeployment(deployment)
 		env.ExpectCreatedNodeCount("==", 1)
@@ -75,11 +102,15 @@ var _ = Describe("Ephemeral OS Disk", func() {
 			karpv1.NodeSelectorRequirementWithMinValues{
 				Key:      corev1.LabelInstanceTypeStable,
 				Operator: corev1.NodeSelectorOpIn,
-				Values:   []string{"Standard_D2pls_v5"}, // 53GB cache disk, does not support ephemeral OS disk
+				Values:   []string{"Standard_D4pls_v5"}, // 100-GiB cache, no ephemeral OS support; 8 GiB fits Automatic agents.
 			},
 		)
 
-		nodeClass.Spec.OSDiskSizeGB = lo.ToPtr[int32](40) // < 53GB cache disk
+		nodeClass.Spec.OSDiskSizeGB = lo.ToPtr[int32](40) // Fits in the 100-GiB cache.
+		if lo.FromPtr(nodeClass.Spec.ImageFamily) == v1beta1.AzureContainerLinuxImageFamily {
+			// Dplsv5 lacks the Trusted Launch support required by ACL.
+			nodeClass.Spec.ImageFamily = lo.ToPtr(v1beta1.Ubuntu2204ImageFamily)
+		}
 
 		deployment := test.Deployment(test.DeploymentOptions{Replicas: 1})
 		env.ExpectCreated(nodeClass, nodePool, deployment)
@@ -91,15 +122,16 @@ var _ = Describe("Ephemeral OS Disk", func() {
 	})
 
 	It("should use a managed OS disk when osDiskType is Managed, even on a SKU that supports ephemeral", func() {
+		diskSize := ephemeralFixtureDiskSize(nodeClass)
 		test.ReplaceRequirements(nodePool, karpv1.NodeSelectorRequirementWithMinValues{
 			Key:      v1beta1.LabelSKUStorageEphemeralOSMaxSize,
 			Operator: corev1.NodeSelectorOpGt,
-			Values:   []string{"50"},
+			Values:   []string{strconv.Itoa(int(diskSize))},
 		})
 
 		deployment := test.Deployment(test.DeploymentOptions{Replicas: 1})
 		nodeClass.Spec.OSDiskType = lo.ToPtr(v1beta1.OSDiskTypeManaged)
-		nodeClass.Spec.OSDiskSizeGB = lo.ToPtr[int32](50)
+		nodeClass.Spec.OSDiskSizeGB = &diskSize
 		env.ExpectCreated(nodeClass, nodePool, deployment)
 		pods := env.EventuallyExpectHealthyDeployment(deployment)
 		env.ExpectCreatedNodeCount("==", 1)

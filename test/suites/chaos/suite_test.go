@@ -99,12 +99,7 @@ var _ = Describe("Chaos", func() {
 			// Create a deployment with a single pod
 			env.ExpectCreated(nodeClass, nodePool, dep)
 
-			// Expect that we never get over a high number of nodes
-			Consistently(func(g Gomega) {
-				list := &corev1.NodeList{}
-				g.Expect(env.Client.List(env.Context, list, client.HasLabels{coretest.DiscoveryLabel})).To(Succeed())
-				g.Expect(len(list.Items)).To(BeNumerically("<", 35))
-			}, time.Minute*5).Should(Succeed())
+			expectBoundedScaleUp()
 		})
 		It("should not produce a runaway scale-up when emptiness is enabled", Label(debug.NoWatch), Label(debug.NoEvents), func() {
 			ctx, cancel := context.WithCancel(env.Context)
@@ -129,15 +124,26 @@ var _ = Describe("Chaos", func() {
 			// Create a deployment with a single pod
 			env.ExpectCreated(nodeClass, nodePool, dep)
 
-			// Expect that we never get over a high number of nodes
-			Consistently(func(g Gomega) {
-				list := &corev1.NodeList{}
-				g.Expect(env.Client.List(env.Context, list, client.HasLabels{coretest.DiscoveryLabel})).To(Succeed())
-				g.Expect(len(list.Items)).To(BeNumerically("<", 35))
-			}, time.Minute*5).Should(Succeed())
+			expectBoundedScaleUp()
 		})
 	})
 })
+
+func expectBoundedScaleUp() {
+	GinkgoHelper()
+	observed := map[string]*corev1.Node{}
+	Consistently(func(g Gomega) {
+		list := &corev1.NodeList{}
+		g.Expect(env.Client.List(env.Context, list, client.HasLabels{coretest.DiscoveryLabel})).To(Succeed())
+		g.Expect(len(list.Items)).To(BeNumerically("<", 35))
+		for _, node := range list.Items {
+			if node.Labels[karpv1.NodePoolLabelKey] == nodePool.Name && node.Status.NodeInfo.KubeletVersion != "" {
+				observed[string(node.UID)] = node.DeepCopy()
+			}
+		}
+	}, time.Minute*5).Should(Succeed())
+	env.ExpectObservedACLNodesEvidence(lo.Values(observed), nodeClass)
+}
 
 type taintAdder struct {
 	kubeClient client.Client

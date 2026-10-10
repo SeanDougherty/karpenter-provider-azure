@@ -37,7 +37,7 @@ import (
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	"github.com/Azure/karpenter-provider-azure/pkg/consts"
 	"github.com/Azure/karpenter-provider-azure/pkg/test"
-	"github.com/blang/semver/v4"
+	"github.com/Azure/karpenter-provider-azure/test/pkg/environment/common"
 	"github.com/samber/lo"
 )
 
@@ -75,7 +75,20 @@ var _ = Describe("Machine Tests", func() {
 		// Check if networking settings are compatible with this test
 		// NETWORK_PLUGIN_MODE must be overlay, but NETWORK_PLUGIN and NETWORK_DATAPLANE
 		// can be unset (using defaults) or set to expected values (but not set to different values)
-		settings := env.ExpectSettings()
+		var settings []corev1.EnvVar
+		if env.InClusterController {
+			settings = env.ExpectSettings()
+		} else {
+			cluster := env.ExpectGetManagedCluster()
+			Expect(cluster.Properties).ToNot(BeNil())
+			Expect(cluster.Properties.NetworkProfile).ToNot(BeNil())
+			network := cluster.Properties.NetworkProfile
+			settings = []corev1.EnvVar{
+				{Name: "NETWORK_PLUGIN", Value: string(lo.FromPtr(network.NetworkPlugin))},
+				{Name: "NETWORK_PLUGIN_MODE", Value: string(lo.FromPtr(network.NetworkPluginMode))},
+				{Name: "NETWORK_DATAPLANE", Value: string(lo.FromPtr(network.NetworkDataplane))},
+			}
+		}
 
 		// Helper function to check if env var is unset or set to expected value
 		checkEnvVar := func(envName, expectedValue string) bool {
@@ -255,7 +268,8 @@ var _ = Describe("Machine Tests", func() {
 							karpv1.DoNotDisruptAnnotationKey: "true",
 						},
 					},
-					NodeSelector: map[string]string{"test-role": "scale-up"},
+					NodeSelector:              map[string]string{"test-role": "scale-up"},
+					TopologySpreadConstraints: common.PackingConstraints(map[string]string{"app": "scale-up"}, 2),
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU: resource.MustParse("3"),
@@ -277,7 +291,8 @@ var _ = Describe("Machine Tests", func() {
 							karpv1.DoNotDisruptAnnotationKey: "true",
 						},
 					},
-					NodeSelector: map[string]string{"test-role": "scale-down"},
+					NodeSelector:              map[string]string{"test-role": "scale-down"},
+					TopologySpreadConstraints: common.PackingConstraints(map[string]string{"app": "scale-down"}, 2),
 					Tolerations: []corev1.Toleration{{
 						Key:      "test-role",
 						Value:    "scale-down",
@@ -308,12 +323,7 @@ var _ = Describe("Machine Tests", func() {
 			env.EventuallyExpectHealthyPodCount(scaleDownSelector, int(scaleDownPodCount))
 
 			By("Performing a K8s upgrade")
-			availableKubernetesUpgrades := env.ExpectSuccessfulGetOfAvailableKubernetesVersionUpgradesForManagedCluster()
-			kubernetesUpgradeVersion := *lo.MaxBy(availableKubernetesUpgrades, func(a, b *containerservice.ManagedClusterPoolUpgradeProfileUpgradesItem) bool {
-				aK8sVersion := lo.Must(semver.Parse(*a.KubernetesVersion))
-				bK8sVersion := lo.Must(semver.Parse(*b.KubernetesVersion))
-				return aK8sVersion.GT(bK8sVersion)
-			}).KubernetesVersion
+			kubernetesUpgradeVersion := env.ExpectKubernetesUpgradeVersion()
 
 			poller := env.ExpectUpgradeOfManagedCluster(kubernetesUpgradeVersion)
 

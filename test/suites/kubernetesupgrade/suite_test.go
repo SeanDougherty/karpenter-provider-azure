@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
-	containerservice "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	"github.com/Azure/karpenter-provider-azure/test/pkg/environment/azure"
 
@@ -54,7 +53,7 @@ const testAzureLinux = true // TODO: find a better way to parameterize this test
 
 var _ = BeforeEach(func() {
 	env.BeforeEach()
-	if testAzureLinux {
+	if testAzureLinux && env.TestImageFamily == "" {
 		nodeClass = env.AZLinuxNodeClass()
 	} else {
 		nodeClass = env.DefaultAKSNodeClass()
@@ -93,13 +92,8 @@ var _ = Describe("KubernetesUpgrade", func() {
 		nodeClaim := env.EventuallyExpectCreatedNodeClaimCount("==", 1)[0]
 		node := env.ExpectCreatedNodeCount("==", 1)[0]
 
-		By("getting latest available kubernetes version upgrade")
-		availableKubernetesUpgrades := env.ExpectSuccessfulGetOfAvailableKubernetesVersionUpgradesForManagedCluster()
-		kubernetesUpgradeVersion := *lo.MaxBy(availableKubernetesUpgrades, func(a, b *containerservice.ManagedClusterPoolUpgradeProfileUpgradesItem) bool {
-			aK8sVersion := lo.Must(semver.Parse(*a.KubernetesVersion))
-			bK8sVersion := lo.Must(semver.Parse(*b.KubernetesVersion))
-			return aK8sVersion.GT(bK8sVersion)
-		}).KubernetesVersion
+		By("selecting an advertised kubernetes version upgrade")
+		kubernetesUpgradeVersion := env.ExpectKubernetesUpgradeVersion()
 
 		By(fmt.Sprintf("upgrading the managed cluster to kubernetes version: %s", kubernetesUpgradeVersion))
 		upgradedMC := env.ExpectSuccessfulUpgradeOfManagedCluster(kubernetesUpgradeVersion)
@@ -121,7 +115,7 @@ var _ = Describe("KubernetesUpgrade", func() {
 		node = env.ExpectCreatedNodeCount("==", 1)[0]
 		Expect(strings.TrimPrefix(node.Status.NodeInfo.KubeletVersion, "v")).To(Equal(kubernetesUpgradeVersion))
 
-		if testAzureLinux {
+		if testAzureLinux && env.TestImageFamily == "" {
 			By("verifying correct Azure Linux version for the upgraded node")
 			k8sVersion, err := semver.Parse(kubernetesUpgradeVersion)
 			Expect(err).ToNot(HaveOccurred())

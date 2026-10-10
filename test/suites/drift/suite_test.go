@@ -113,6 +113,9 @@ var _ = Describe("Drift", func() {
 						},
 						Labels: map[string]string{"app": "large-app"},
 					},
+					// Explicit spreading preserves CPU packing on Automatic, which
+					// otherwise injects preferred anti-affinity for each replica.
+					TopologySpreadConstraints: budgetPackingConstraints(),
 					// Each node has 8 cpus, so should fit 2 pods.
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
@@ -149,6 +152,7 @@ var _ = Describe("Drift", func() {
 
 			env.EventuallyExpectDrifted(nodeClaims...)
 
+			env.EventuallyExpectTaintedNodeCount(">", 0)
 			env.ConsistentlyExpectDisruptionsUntilNoneLeft(3, 2, 5*time.Minute)
 		})
 		It("should respect budgets for non-empty delete drift", func() {
@@ -173,6 +177,7 @@ var _ = Describe("Drift", func() {
 						},
 						Labels: map[string]string{"app": "large-app"},
 					},
+					TopologySpreadConstraints: budgetPackingConstraints(),
 					// Each node has 8 cpu, so should fit no more than 3 pods.
 					ResourceRequirements: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
@@ -221,6 +226,7 @@ var _ = Describe("Drift", func() {
 				env.ExpectUpdated(pod)
 			}
 
+			env.EventuallyExpectTaintedNodeCount(">", 0)
 			env.ConsistentlyExpectDisruptionsUntilNoneLeft(3, 2, 5*time.Minute)
 		})
 		It("should respect budgets for non-empty replace drift", func() {
