@@ -489,39 +489,19 @@ var _ = Describe("Ephemeral Storage", func() {
 		env.ExpectCreatedNodeCount("==", 1)
 	})
 	It("should not advertise more ephemeral storage than the registered node", func() {
-		deployment := test.Deployment(test.DeploymentOptions{Replicas: 1, PodOptions: test.PodOptions{
-			ResourceRequirements: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceEphemeralStorage: resource.MustParse("1Gi"),
-				},
-			},
-		}})
-
-		env.ExpectCreated(nodeClass, nodePool, deployment)
-		pods := env.EventuallyExpectHealthyDeployment(deployment)
-		nodeClaim := env.EventuallyExpectCreatedNodeClaimCount("==", 1)[0]
-		node := env.GetNode(pods[0].Spec.NodeName)
-
-		Eventually(func(g Gomega) {
-			g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(nodeClaim), nodeClaim)).To(Succeed())
-			g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(node), node)).To(Succeed())
-
-			modeledCapacity := nodeClaim.Status.Capacity[corev1.ResourceEphemeralStorage]
-			actualCapacity := node.Status.Capacity[corev1.ResourceEphemeralStorage]
-			modeledAllocatable := nodeClaim.Status.Allocatable[corev1.ResourceEphemeralStorage]
-			actualAllocatable := node.Status.Allocatable[corev1.ResourceEphemeralStorage]
-			g.Expect(modeledCapacity.IsZero()).To(BeFalse())
-			g.Expect(actualCapacity.IsZero()).To(BeFalse())
-			g.Expect(modeledAllocatable.IsZero()).To(BeFalse())
-			g.Expect(actualAllocatable.IsZero()).To(BeFalse())
-			quantities := fmt.Sprintf(
-				"modeled-capacity=%d actual-capacity=%d modeled-allocatable=%d actual-allocatable=%d",
-				modeledCapacity.Value(), actualCapacity.Value(), modeledAllocatable.Value(), actualAllocatable.Value(),
-			)
-			g.Expect(modeledCapacity.Cmp(actualCapacity)).To(BeNumerically("<=", 0), quantities)
-			g.Expect(modeledAllocatable.Cmp(actualAllocatable)).To(BeNumerically("<=", 0), quantities)
-		}).Should(Succeed())
+		expectEphemeralStorageFitsNode()
 	})
+	DescribeTable("ACL filesystem capacity at disk boundaries", func(size int32) {
+		if env.TestImageFamily != v1beta1.AzureContainerLinuxImageFamily {
+			Skip("ACL-specific filesystem layout qualification")
+		}
+		nodeClass.Spec.OSDiskSizeGB = lo.ToPtr(size)
+		expectEphemeralStorageFitsNode()
+	},
+		Entry("64 GiB", int32(64)),
+		Entry("128 GiB", int32(128)),
+		Entry("256 GiB", int32(256)),
+	)
 	It("should run a pod with ephemeral storage that uses memory-backed emptyDir", func() {
 		// Use a direct pod because the test exercises pod-local emptyDir storage directly.
 		pod := env.Pod(test.PodOptions{})
@@ -535,6 +515,7 @@ var _ = Describe("Ephemeral Storage", func() {
 				},
 			},
 		})
+
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
 			Name:      "emptydir-memory-volume",
 			MountPath: "/mnt/emptydir-memory",
@@ -545,3 +526,37 @@ var _ = Describe("Ephemeral Storage", func() {
 		env.ExpectCreatedNodeCount("==", 1)
 	})
 })
+
+func expectEphemeralStorageFitsNode() {
+	GinkgoHelper()
+	deployment := test.Deployment(test.DeploymentOptions{Replicas: 1, PodOptions: test.PodOptions{
+		ResourceRequirements: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("1Gi")},
+		},
+	}})
+	env.ExpectCreated(nodeClass, nodePool, deployment)
+	pods := env.EventuallyExpectHealthyDeployment(deployment)
+	nodeClaim := env.EventuallyExpectCreatedNodeClaimCount("==", 1)[0]
+	node := env.GetNode(pods[0].Spec.NodeName)
+	var quantities string
+	Eventually(func(g Gomega) {
+		g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(nodeClaim), nodeClaim)).To(Succeed())
+		g.Expect(env.Client.Get(env.Context, client.ObjectKeyFromObject(node), node)).To(Succeed())
+		modeledCapacity := nodeClaim.Status.Capacity[corev1.ResourceEphemeralStorage]
+		actualCapacity := node.Status.Capacity[corev1.ResourceEphemeralStorage]
+		modeledAllocatable := nodeClaim.Status.Allocatable[corev1.ResourceEphemeralStorage]
+		actualAllocatable := node.Status.Allocatable[corev1.ResourceEphemeralStorage]
+		g.Expect(modeledCapacity.IsZero()).To(BeFalse())
+		g.Expect(actualCapacity.IsZero()).To(BeFalse())
+		g.Expect(modeledAllocatable.IsZero()).To(BeFalse())
+		g.Expect(actualAllocatable.IsZero()).To(BeFalse())
+		quantities = fmt.Sprintf(
+			"modeled-capacity=%d actual-capacity=%d modeled-allocatable=%d actual-allocatable=%d",
+			modeledCapacity.Value(), actualCapacity.Value(), modeledAllocatable.Value(), actualAllocatable.Value(),
+		)
+		g.Expect(modeledCapacity.Cmp(actualCapacity)).To(BeNumerically("<=", 0), quantities)
+		g.Expect(modeledAllocatable.Cmp(actualAllocatable)).To(BeNumerically("<=", 0), quantities)
+	}).Should(Succeed())
+	fmt.Fprintf(GinkgoWriter, "Filesystem capacity evidence: disk-size-gb=%d node=%s %s\n",
+		lo.FromPtr(nodeClass.Spec.OSDiskSizeGB), node.Name, quantities)
+}
