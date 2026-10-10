@@ -1068,8 +1068,7 @@ func TestShouldUseNodeHardening(t *testing.T) {
 func TestPricingCloudOptions(t *testing.T) {
 	for _, value := range []string{"", "AzurePublicCloud", "AzureChinaCloud", "https://untrusted.example"} {
 		t.Run(value, func(t *testing.T) {
-			opts := test.Options()
-			opts.PricingCloud = value
+			opts := test.Options(test.OptionsFields{PricingCloud: lo.ToPtr(value)})
 			err := opts.Validate()
 			valid := value == "" || value == "AzurePublicCloud"
 			if (err == nil) != valid {
