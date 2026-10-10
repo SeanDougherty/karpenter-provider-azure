@@ -61,6 +61,72 @@ func TestKubeReservedResources(t *testing.T) {
 	}
 }
 
+func TestEphemeralStorageCapacityByImageFamily(t *testing.T) {
+	for _, tc := range []struct {
+		name, family string
+		diskGiB      int32
+		wantBytes    int64
+	}{
+		{"ACL minimum disk", v1beta1.AzureContainerLinuxImageFamily, 64, 60_913_373_675},
+		{"ACL default disk", v1beta1.AzureContainerLinuxImageFamily, 128, 124_822_487_040},
+		{"ACL larger disk", v1beta1.AzureContainerLinuxImageFamily, 256, 252_640_713_768},
+		{"ACL large disk", v1beta1.AzureContainerLinuxImageFamily, 1024, 1_019_550_074_142},
+		{"ACL unset disk", v1beta1.AzureContainerLinuxImageFamily, 0, 0},
+		{"ACL below partition reserve", v1beta1.AzureContainerLinuxImageFamily, 2, 0},
+		{"Ubuntu unchanged", v1beta1.Ubuntu2204ImageFamily, 128, 128_000_000_000},
+		{"Azure Linux unchanged", v1beta1.AzureLinuxImageFamily, 128, 128_000_000_000},
+		{"unspecified family unchanged", "", 128, 128_000_000_000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capacity := ephemeralStorage(&instanceTypeParameters{ImageFamily: tc.family, OSDiskSizeGB: tc.diskGiB})
+			if capacity.Value() != tc.wantBytes {
+				t.Fatalf("got %d bytes, want %d", capacity.Value(), tc.wantBytes)
+			}
+		})
+	}
+}
+
+func TestACLStorageFitsRegisteredFilesystem(t *testing.T) {
+	// Registered 128-GiB ACL node: capacity 126561042432, allocatable
+	// 113904938001. The former nominal-disk model exceeded both.
+	const actualCapacity int64 = 126_561_042_432
+	const actualAllocatable int64 = 113_904_938_001
+	for _, mode := range []string{
+		consts.ProvisionModeAKSScriptless,
+		consts.ProvisionModeBootstrappingClient,
+		consts.ProvisionModeAKSMachineAPI,
+		consts.ProvisionModeAKSMachineAPIHeaderBatch,
+	} {
+		t.Run(mode, func(t *testing.T) {
+			g := NewWithT(t)
+			sku := skewer.SKU(compute.ResourceSku{
+				Name: lo.ToPtr("Standard_D2as_v5"), Size: lo.ToPtr("D2as_v5"),
+				Capabilities: &[]compute.ResourceSkuCapabilities{
+					{Name: lo.ToPtr("vCPUs"), Value: lo.ToPtr("2")},
+					{Name: lo.ToPtr("MemoryGB"), Value: lo.ToPtr("8")},
+				},
+			})
+			ctx := options.ToContext(context.Background(), &options.Options{
+				ProvisionMode: mode, NetworkPlugin: consts.NetworkPluginAzure, VMMemoryOverheadPercent: 0.075,
+			})
+			instanceType := newInstanceType(ctx, &sku, lo.Must(sku.GetVMSize()), "eastus2", nil, &instanceTypeParameters{
+				ImageFamily: v1beta1.AzureContainerLinuxImageFamily, OSDiskSizeGB: 128, MaxPods: 250,
+			}, "x64")
+			capacity := instanceType.Capacity[corev1.ResourceEphemeralStorage]
+			allocatable := instanceType.Allocatable()[corev1.ResourceEphemeralStorage]
+			g.Expect(capacity.Value()).To(BeNumerically(">", 0))
+			g.Expect(capacity.Value()).To(BeNumerically("<=", actualCapacity))
+			g.Expect(allocatable.Value()).To(BeNumerically("<=", actualAllocatable))
+			g.Expect(resources.Fits(corev1.ResourceList{
+				corev1.ResourceEphemeralStorage: *resource.NewQuantity(actualAllocatable+1, resource.BinarySI),
+			}, instanceType.Allocatable())).To(BeFalse())
+			g.Expect(resources.Fits(corev1.ResourceList{
+				corev1.ResourceEphemeralStorage: allocatable,
+			}, instanceType.Allocatable())).To(BeTrue())
+		})
+	}
+}
+
 func TestInstanceTypeMemoryReservations(t *testing.T) {
 	// Synthetic 10-CPU/42-GiB pods plus 1 CPU/3 GiB of per-node overhead.
 	requestsFor := func(pods int64) corev1.ResourceList {

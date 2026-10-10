@@ -327,6 +327,14 @@ func CalculateMemoryWithoutOverhead(vmMemoryOverheadPercent float64, skuMemoryGi
 }
 
 func ephemeralStorage(params *instanceTypeParameters) *resource.Quantity {
+	if params.ImageFamily == v1beta1.AzureContainerLinuxImageFamily {
+		// ACL has separate EFI, dual /usr, and OEM partitions (under 3 GiB).
+		// Its ext4 format uses a 256-byte inode per 4-KiB block: inode tables
+		// alone consume 6.25%. Reserve 7% for all filesystem metadata.
+		const partitionReserve = int64(3 * 1024 * 1024 * 1024)
+		rootBytes := max(int64(params.OSDiskSizeGB)*1024*1024*1024-partitionReserve, 0)
+		return resource.NewQuantity(rootBytes*93/100, resource.BinarySI)
+	}
 	return resource.NewScaledQuantity(int64(params.OSDiskSizeGB), resource.Giga)
 }
 

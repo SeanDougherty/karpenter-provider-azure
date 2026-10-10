@@ -65,8 +65,21 @@ the generated kubelet configuration on newly created nodes. Other provisioning
 modes retain their AKS-owned bootstrap defaults; the provider's estimates align
 with those defaults. Existing nodes are not reconfigured by this change.
 
-Node-hardening reservations, CPU and system reservations, storage thresholds,
+Node-hardening reservations, CPU and system reservations, storage threshold percentages,
 and the separate `VM_MEMORY_OVERHEAD_PERCENT` safety margin remain unchanged.
+
+## ACL temporary-storage estimates
+
+For `AzureContainerLinux`, the scheduling estimate excludes a 3-GiB budget
+for the separate EFI, dual `/usr`, and OEM partitions, then reserves 7% of
+the remaining filesystem for metadata. ACL's ext4 format uses one 256-byte
+inode per 4-KiB block, so inode tables alone consume 6.25%; the remaining
+budget covers other filesystem metadata. The existing eviction and system
+reservations are applied to this reduced capacity.
+
+This conservative estimate applies consistently across provisioning modes.
+It does not resize disks, change kubelet settings, or rewrite registered
+Node capacity. Other image families retain their existing estimates.
 
 ## Known limitations
 
