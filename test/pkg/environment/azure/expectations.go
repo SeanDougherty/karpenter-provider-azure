@@ -33,7 +33,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v7"
 	containerservice "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
-	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
 	"github.com/Azure/karpenter-provider-azure/pkg/auth"
 	"github.com/Azure/karpenter-provider-azure/pkg/consts"
 	"github.com/Azure/karpenter-provider-azure/pkg/providers/instance"
@@ -78,78 +77,6 @@ func (env *Environment) ExpectCreatedInterface(networkInterface armnetwork.Inter
 		}
 		return nil
 	})
-}
-
-func (env *Environment) ExpectCreatedOrphanInterface(networkInterface armnetwork.Interface) {
-	GinkgoHelper()
-	if env.TestImageFamily != v1beta1.AzureContainerLinuxImageFamily {
-		env.ExpectCreatedInterface(networkInterface)
-		return
-	}
-	Expect(env.createOrphanInterface(networkInterface)).To(Succeed())
-}
-
-func (env *Environment) createOrphanInterface(networkInterface armnetwork.Interface) error {
-	name := lo.FromPtr(networkInterface.Name)
-	if name == "" || env.SubscriptionID == "" || env.Region == "" || env.ClusterResourceGroup == "" || env.NodeResourceGroup == "" ||
-		strings.EqualFold(env.ClusterResourceGroup, env.NodeResourceGroup) {
-		return fmt.Errorf("orphan NIC fixture requires a named interface and separate owning cluster/node resource groups")
-	}
-	if networkInterface.Properties == nil || len(networkInterface.Properties.IPConfigurations) == 0 {
-		return fmt.Errorf("orphan NIC fixture requires an IP configuration")
-	}
-	for _, config := range networkInterface.Properties.IPConfigurations {
-		if config == nil || config.Properties == nil {
-			return fmt.Errorf("orphan NIC fixture contains an invalid IP configuration")
-		}
-	}
-	vnetName := name + "-vnet"
-	vnetID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s",
-		env.SubscriptionID, env.ClusterResourceGroup, vnetName)
-	// The tracker runs callbacks concurrently. Keep dependent NIC/VNet cleanup
-	// in one callback, registered before either create can fail.
-	env.tracker.Add(vnetID, func() error {
-		nicDelete, err := env.interfacesClient.BeginDelete(env.Context, env.NodeResourceGroup, name, nil)
-		if err != nil {
-			return fmt.Errorf("deleting orphan NIC %s: %w", name, err)
-		}
-		if _, err = nicDelete.PollUntilDone(env.Context, nil); err != nil {
-			return fmt.Errorf("waiting for orphan NIC %s deletion: %w", name, err)
-		}
-		vnetDelete, err := env.vnetClient.BeginDelete(env.Context, env.ClusterResourceGroup, vnetName, nil)
-		if err != nil {
-			return fmt.Errorf("deleting orphan NIC test VNet %s: %w", vnetName, err)
-		}
-		_, err = vnetDelete.PollUntilDone(env.Context, nil)
-		return err
-	})
-	vnetCreate, err := env.vnetClient.BeginCreateOrUpdate(env.Context, env.ClusterResourceGroup, vnetName, armnetwork.VirtualNetwork{
-		Location: lo.ToPtr(env.Region),
-		Properties: &armnetwork.VirtualNetworkPropertiesFormat{
-			AddressSpace: &armnetwork.AddressSpace{AddressPrefixes: []*string{lo.ToPtr("10.250.0.0/24")}},
-			Subnets: []*armnetwork.Subnet{{
-				Name:       lo.ToPtr("orphan"),
-				Properties: &armnetwork.SubnetPropertiesFormat{AddressPrefix: lo.ToPtr("10.250.0.0/24")},
-			}},
-		},
-	}, nil)
-	if err != nil {
-		return fmt.Errorf("creating orphan NIC test VNet: %w", err)
-	}
-	if _, err = vnetCreate.PollUntilDone(env.Context, nil); err != nil {
-		return fmt.Errorf("waiting for orphan NIC test VNet: %w", err)
-	}
-	// Leave Automatic's protected cluster subnet untouched. The orphan stays
-	// in the node resource group with its original tags, as required by NIC GC.
-	for _, config := range networkInterface.Properties.IPConfigurations {
-		config.Properties.Subnet = &armnetwork.Subnet{ID: lo.ToPtr(vnetID + "/subnets/orphan")}
-	}
-	nicCreate, err := env.interfacesClient.BeginCreateOrUpdate(env.Context, env.NodeResourceGroup, name, networkInterface, nil)
-	if err != nil {
-		return fmt.Errorf("creating orphan NIC in the node resource group: %w", err)
-	}
-	_, err = nicCreate.PollUntilDone(env.Context, nil)
-	return err
 }
 
 func (env *Environment) ExpectGetManagedCluster() *containerservice.ManagedCluster {

@@ -66,11 +66,11 @@ Ubuntu2204 control because this SKU does not support ACL's required Trusted
 Launch.
 Managed Machine networking checks read the actual cluster network profile
 instead of assuming a controller Deployment exists in the workload cluster.
-The ACL orphan-NIC fixture creates an isolated disposable subnet in its
-owning parent resource group, leaving the protected managed subnet and all
-permissions unchanged. The tagged orphan NIC still lives in the node
-resource group inspected by the original garbage collector. Its real
-deletion assertion is unchanged; cleanup deletes NIC before VNet.
+The original orphan-NIC test requires permission to create a tagged interface
+in the node resource group. Automatic's node-resource-group deny assignment
+blocks this test fixture even with an isolated subnet. Record this as a
+fixture-permission blocker; do not weaken the protection or skip the test to
+claim a full NodeClaim pass.
 Chaos retains its five-minute, fewer-than-35-node assertion and unmodified
 taint injection. It records real node snapshots during that window and checks
 ACL image, exact kubelet version, Machine annotation, and provider ID afterward.

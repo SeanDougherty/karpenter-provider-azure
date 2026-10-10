@@ -16,14 +16,12 @@ limitations under the License.
 package azure
 
 import (
-	"encoding/json"
 	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -31,9 +29,7 @@ import (
 	azfake "github.com/Azure/azure-sdk-for-go/sdk/azcore/fake"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	containerservice "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
 	"github.com/Azure/karpenter-provider-azure/pkg/apis/v1beta1"
-	azuretest "github.com/Azure/karpenter-provider-azure/pkg/test/azure"
 	"github.com/Azure/karpenter-provider-azure/test/pkg/environment/common"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -96,116 +92,6 @@ func TestACLNodeIdentity(t *testing.T) {
 		if err := validateACLNodeIdentity(bad); err == nil {
 			t.Errorf("accepted missing identity %s", key)
 		}
-	}
-}
-
-func TestOrphanNICFixtureRejectsInvalidScope(t *testing.T) {
-	for _, tc := range []struct{ subscription, parent, node, region string }{
-		{"sub", "parent", "PARENT", "eastus2"},
-		{"", "parent", "node", "eastus2"},
-		{"sub", "", "node", "eastus2"},
-		{"sub", "parent", "", "eastus2"},
-		{"sub", "parent", "node", ""},
-	} {
-		env := &Environment{
-			SubscriptionID: tc.subscription, ClusterResourceGroup: tc.parent,
-			NodeResourceGroup: tc.node, Region: tc.region,
-		}
-		if err := env.createOrphanInterface(armnetwork.Interface{
-			Name: lo.ToPtr("orphan-nic"),
-			Properties: &armnetwork.InterfacePropertiesFormat{
-				IPConfigurations: []*armnetwork.InterfaceIPConfiguration{{
-					Properties: &armnetwork.InterfaceIPConfigurationPropertiesFormat{},
-				}},
-			},
-		}); err == nil {
-			t.Fatalf("invalid fixture scope must fail before any Azure call: %+v", tc)
-		}
-	}
-}
-
-func TestOrphanNICFixtureScopeAndCleanup(t *testing.T) {
-	for _, failNIC := range []bool{false, true} {
-		t.Run(map[bool]string{false: "success", true: "failed NIC creation"}[failNIC], func(t *testing.T) {
-			vnetID := "/subscriptions/sub/resourceGroups/parent/providers/Microsoft.Network/virtualNetworks/orphan-nic-vnet"
-			nicID := "/subscriptions/sub/resourceGroups/node/providers/Microsoft.Network/networkInterfaces/orphan-nic"
-			tags := map[string]*string{"karpenter.sh_nodepool": lo.ToPtr("default")}
-			var calls []string
-			options := &arm.ClientOptions{ClientOptions: policy.ClientOptions{Transport: machineTestTransport(func(req *http.Request) (*http.Response, error) {
-				calls = append(calls, req.Method+" "+req.URL.Path)
-				status, body := http.StatusNoContent, ""
-				if req.Method == http.MethodPut {
-					status = http.StatusOK
-					switch req.URL.Path {
-					case vnetID:
-						var network armnetwork.VirtualNetwork
-						if err := json.NewDecoder(req.Body).Decode(&network); err != nil {
-							t.Fatal(err)
-						}
-						if lo.FromPtr(network.Location) != "eastus2" || network.Properties == nil ||
-							len(network.Properties.Subnets) != 1 ||
-							lo.FromPtr(network.Properties.Subnets[0].Properties.AddressPrefix) != "10.250.0.0/24" ||
-							len(network.Properties.VirtualNetworkPeerings) != 0 {
-							t.Fatal("orphan fixture must use an isolated subnet in the owning parent group")
-						}
-						body = `{"id":"` + vnetID + `","properties":{"provisioningState":"Succeeded"}}`
-					case nicID:
-						var nic armnetwork.Interface
-						if err := json.NewDecoder(req.Body).Decode(&nic); err != nil {
-							t.Fatal(err)
-						}
-						if !reflect.DeepEqual(nic.Tags, tags) ||
-							lo.FromPtr(nic.Properties.IPConfigurations[0].Properties.Subnet.ID) != vnetID+"/subnets/orphan" {
-							t.Fatal("the tagged NIC must stay in the node group without joining the protected subnet")
-						}
-						body = `{"id":"` + nicID + `","properties":{"provisioningState":"Succeeded"}}`
-						if failNIC {
-							status, body = http.StatusForbidden, `{"error":{"code":"AuthorizationFailed","message":"injected test failure"}}`
-						}
-					default:
-						t.Fatalf("unexpected create scope: %s", req.URL.Path)
-					}
-				}
-				return &http.Response{
-					StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}},
-					Body: io.NopCloser(strings.NewReader(body)), Request: req,
-				}, nil
-			})}}
-			vnets, err := armnetwork.NewVirtualNetworksClient("sub", &azfake.TokenCredential{}, options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			nics, err := armnetwork.NewInterfacesClient("sub", &azfake.TokenCredential{}, options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			env := &Environment{
-				Environment: &common.Environment{Context: t.Context()}, SubscriptionID: "sub",
-				ClusterResourceGroup: "parent", NodeResourceGroup: "node", Region: "eastus2",
-				vnetClient: vnets, interfacesClient: nics, tracker: azuretest.NewTracker(),
-			}
-			err = env.createOrphanInterface(armnetwork.Interface{
-				Name: lo.ToPtr("orphan-nic"), Location: lo.ToPtr("eastus2"), Tags: tags,
-				Properties: &armnetwork.InterfacePropertiesFormat{
-					IPConfigurations: []*armnetwork.InterfaceIPConfiguration{{
-						Name: lo.ToPtr("ip-config"),
-						Properties: &armnetwork.InterfaceIPConfigurationPropertiesFormat{
-							Subnet: &armnetwork.Subnet{ID: lo.ToPtr("/protected/cluster/subnet")},
-						},
-					}},
-				},
-			})
-			if (err != nil) != failNIC {
-				t.Fatalf("NIC create failure must propagate: %v", err)
-			}
-			if err := env.tracker.Cleanup(); err != nil {
-				t.Fatal(err)
-			}
-			want := []string{"PUT " + vnetID, "PUT " + nicID, "DELETE " + nicID, "DELETE " + vnetID}
-			if !reflect.DeepEqual(calls, want) {
-				t.Fatalf("resource scopes or dependent cleanup order changed: got %v, want %v", calls, want)
-			}
-		})
 	}
 }
 
