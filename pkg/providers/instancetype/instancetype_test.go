@@ -67,10 +67,12 @@ func TestEphemeralStorageCapacityByImageFamily(t *testing.T) {
 		diskGiB      int32
 		wantBytes    int64
 	}{
-		{"ACL minimum disk", v1beta1.AzureContainerLinuxImageFamily, 64, 60_913_373_675},
+		{"ACL API minimum disk", v1beta1.AzureContainerLinuxImageFamily, 60, 56_919_054_090},
+		{"ACL 64-GiB disk", v1beta1.AzureContainerLinuxImageFamily, 64, 60_913_373_675},
 		{"ACL default disk", v1beta1.AzureContainerLinuxImageFamily, 128, 124_822_487_040},
 		{"ACL larger disk", v1beta1.AzureContainerLinuxImageFamily, 256, 252_640_713_768},
 		{"ACL large disk", v1beta1.AzureContainerLinuxImageFamily, 1024, 1_019_550_074_142},
+		{"ACL API maximum disk", v1beta1.AzureContainerLinuxImageFamily, 2048, 2_042_095_887_974},
 		{"ACL unset disk", v1beta1.AzureContainerLinuxImageFamily, 0, 0},
 		{"ACL below partition reserve", v1beta1.AzureContainerLinuxImageFamily, 2, 0},
 		{"Ubuntu unchanged", v1beta1.Ubuntu2204ImageFamily, 128, 128_000_000_000},
