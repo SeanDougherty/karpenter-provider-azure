@@ -102,14 +102,13 @@ var _ = Describe("Ephemeral OS Disk", func() {
 			karpv1.NodeSelectorRequirementWithMinValues{
 				Key:      corev1.LabelInstanceTypeStable,
 				Operator: corev1.NodeSelectorOpIn,
-				Values:   []string{"Standard_D2pls_v5"}, // 53GB cache disk, does not support ephemeral OS disk
+				Values:   []string{"Standard_D4pls_v5"}, // 100-GiB cache, no ephemeral OS support; 8 GiB fits Automatic agents.
 			},
 		)
 
-		nodeClass.Spec.OSDiskSizeGB = lo.ToPtr[int32](40) // < 53GB cache disk
+		nodeClass.Spec.OSDiskSizeGB = lo.ToPtr[int32](40) // Fits in the 100-GiB cache.
 		if lo.FromPtr(nodeClass.Spec.ImageFamily) == v1beta1.AzureContainerLinuxImageFamily {
-			// This 53-GiB cache boundary cannot hold ACL's minimum disk.
-			// Retain the owning small-cache test as an explicit OS control.
+			// Dplsv5 lacks the Trusted Launch support required by ACL.
 			nodeClass.Spec.ImageFamily = lo.ToPtr(v1beta1.Ubuntu2204ImageFamily)
 		}
 

@@ -59,10 +59,18 @@ follows the Node's real NodeClaim owner when there is no NodePool, requiring
 matching UID, node name, and provider ID before resolving its AKSNodeClass.
 The existing OS, image, version, Machine, and network assertions still apply.
 ACL ephemeral-disk fixtures use 64 GiB rather than the generic 50-GiB test disk.
-The fixed 40-GiB/53-GiB-cache case remains an explicit Ubuntu2204 compatibility
-control because that cache boundary cannot represent a valid ACL disk.
+The cache-only control uses `Standard_D4pls_v5`: 8 GiB memory fits the
+Automatic agents, and its 40-GiB disk fits the verified 100-GiB cache even
+though the SKU does not support ephemeral OS disks. It remains an explicit
+Ubuntu2204 control because this SKU does not support ACL's required Trusted
+Launch.
 Managed Machine networking checks read the actual cluster network profile
 instead of assuming a controller Deployment exists in the workload cluster.
+The ACL orphan-NIC fixture creates an isolated disposable subnet in its
+owning parent resource group, leaving the protected managed subnet and all
+permissions unchanged. The tagged orphan NIC still lives in the node
+resource group inspected by the original garbage collector. Its real
+deletion assertion is unchanged; cleanup deletes NIC before VNet.
 Chaos retains its five-minute, fewer-than-35-node assertion and unmodified
 taint injection. It records real node snapshots during that window and checks
 ACL image, exact kubelet version, Machine annotation, and provider ID afterward.

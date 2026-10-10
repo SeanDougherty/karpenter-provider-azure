@@ -26,7 +26,7 @@ import (
 
 var _ = Describe("gc", func() {
 	It("should garbage collect network interfaces created by karpenter", func() {
-		env.ExpectCreatedInterface(armnetwork.Interface{
+		env.ExpectCreatedOrphanInterface(armnetwork.Interface{
 			Name:     lo.ToPtr("orphan-nic"),
 			Location: lo.ToPtr(env.Region),
 			Tags:     azkarptest.ManagedTags("default"),
